@@ -18,7 +18,14 @@
             <span class="card-label">图文任务</span>
             <span class="image-count">{{ post.image_count }} 张图片</span>
         </div>
-        <h2>{{ post.name }}</h2>
+        <div class="post-title-row">
+            <h2>{{ post.name }}</h2>
+            {% if post.published %}
+            <span class="status-badge status-published">已发布</span>
+            {% else %}
+            <span class="status-badge status-unpublished">未发布</span>
+            {% endif %}
+        </div>
         <p class="created-at">{{ post.created_display }}</p>
         <p class="platforms">{{ post.platforms | join(' · ') }}</p>
         <a class="button button-secondary" href="{{ url_for('post_detail', post_id=post.id) }}">查看</a>
@@ -34,4 +41,3 @@
 </section>
 {% endif %}
 {% endblock %}
-

@@ -116,12 +116,17 @@ h4 { margin-bottom: 12px; font-size: 16px; font-weight: 600; }
 }
 
 .post-card { padding: 22px; }
-.post-card h2 { margin: 23px 0 4px; overflow-wrap: anywhere; }
+.post-card h2 { margin: 0; overflow-wrap: anywhere; }
+.post-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 23px 0 4px; }
+.post-title-row h2 { min-width: 0; }
 .card-topline, .section-heading, .form-actions, .card-topline { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .card-label { color: var(--muted); font-size: 12px; }
 .image-count { color: var(--accent); font-size: 12px; font-weight: 600; }
 .created-at { margin-bottom: 14px; color: var(--muted); font-size: 13px; }
 .platforms { min-height: 28px; margin-bottom: 20px; color: #475569; font-size: 13px; }
+.status-badge { display: inline-flex; align-items: center; width: max-content; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.status-published { color: #166534; background: #dcfce7; }
+.status-unpublished { color: #475569; background: #e2e8f0; }
 
 .empty-state { padding: 68px 24px; text-align: center; }
 .empty-state h1, .empty-state h2 { margin-bottom: 8px; }
@@ -202,6 +207,24 @@ h4 { margin-bottom: 12px; font-size: 16px; font-weight: 600; }
 .detail-heading { display: block; }
 .detail-meta { margin-bottom: 0; color: var(--muted); font-size: 13px; }
 code { padding: 2px 5px; border-radius: 4px; color: #475569; background: #e2e8f0; font-family: Consolas, monospace; font-size: 12px; }
+.publish-section { border-color: #bfdbfe; }
+.live-note { color: var(--muted); font-size: 12px; }
+.publish-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+.published-at { min-height: 24px; margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+.publish-actions form { margin: 0; }
+.workflow-block { margin-top: 22px; padding: 18px; border-radius: 8px; background: var(--surface-soft); }
+.workflow-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.workflow-heading h3 { margin: 0; }
+.workflow-heading span { color: var(--accent); font-size: 13px; font-weight: 700; }
+.workflow-platforms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.workflow-platform { display: flex; justify-content: space-between; gap: 10px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 7px; background: #fff; font-size: 13px; }
+.workflow-platform span:last-child { color: var(--muted); font-weight: 600; }
+.workflow-platform span:last-child[data-status="ready"] { color: #15803d; }
+.workflow-platform span:last-child[data-status="running"], .workflow-platform span:last-child[data-status="waiting"] { color: var(--accent); }
+.workflow-platform span:last-child[data-status="failed"] { color: var(--danger); }
+.workflow-message { min-height: 25px; margin: 16px 0 8px; font-size: 14px; }
+.workflow-error { min-height: 0; margin: 0 0 13px; color: var(--danger); font-size: 13px; }
+.publisher-note { margin: 20px 0 0; color: var(--muted); font-size: 12px; }
 .detail-image-card figcaption { text-align: center; }
 .detail-platforms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .detail-platform { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 8px; }
@@ -210,7 +233,7 @@ code { padding: 2px 5px; border-radius: 4px; color: #475569; background: #e2e8f0
 .detail-platform pre { min-height: 220px; margin: 0; padding: 14px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 7px; color: #334155; background: var(--surface-soft); font: 13px/1.7 Consolas, "Microsoft YaHei", monospace; }
 
 @media (max-width: 900px) {
-    .platform-fields, .detail-platforms { grid-template-columns: 1fr; }
+    .platform-fields, .detail-platforms, .workflow-platforms { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 600px) {
@@ -218,5 +241,5 @@ code { padding: 2px 5px; border-radius: 4px; color: #475569; background: #e2e8f0
     .page-shell { padding-top: 28px; }
     .page-heading { align-items: flex-start; flex-direction: column; }
     .form-section, .detail-section { padding: 19px; }
+    .publish-summary { align-items: stretch; flex-direction: column; }
 }
-

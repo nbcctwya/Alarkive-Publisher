@@ -8,6 +8,7 @@ from playwright.sync_api import Locator, Page, TimeoutError
 
 from .content import PlatformContent, PostContent
 from .renderer import render_for_platform
+from .workflow_controller import CLIWorkflowController, WorkflowController
 from .xiaohongshu import PublisherError, _run_step
 
 
@@ -119,27 +120,30 @@ def _navigate_home(page: Page) -> None:
     _wait_for_dom(page)
 
 
-def _check_login(page: Page) -> None:
+def _check_login(page: Page, controller: WorkflowController | None = None) -> None:
     _navigate_home(page)
     if _is_login_page(page):
-        print("WeChat Official Account is not logged in.")
-        print()
-        print("Please complete login manually in the browser.")
-        print("This may require scanning a QR code in WeChat.")
-        print()
-        print("Press Enter after login is complete...")
-        input()
+        if controller is None:
+            controller = CLIWorkflowController()
+        controller.wait_for_user(
+            "wechat",
+            "login",
+            "需要登录微信公众号。请在打开的浏览器中完成扫码或登录。",
+            "登录完成后继续。",
+        )
         _navigate_home(page)
         if _is_login_page(page):
             raise PublisherError("Checking WeChat login", "Login was not completed.")
 
     if _is_account_selection_page(page):
-        print("Multiple WeChat Official Accounts may be available.")
-        print()
-        print("Please select the target account manually in the browser.")
-        print()
-        print("Press Enter after entering the target account dashboard...")
-        input()
+        if controller is None:
+            controller = CLIWorkflowController()
+        controller.wait_for_user(
+            "wechat",
+            "account_selection",
+            "请在打开的浏览器中选择目标公众号。",
+            "已选择目标账号并进入后台后继续。",
+        )
         _navigate_home(page)
         if _is_login_page(page) or _is_account_selection_page(page):
             raise PublisherError(
@@ -459,21 +463,33 @@ def _upload_images(page: Page, images: tuple[Path, ...]) -> None:
     _wait_for_uploads(page, len(images))
 
 
-def run_wechat(page: Page, post: PostContent) -> Page:
+def run_wechat(
+    page: Page,
+    post: PostContent,
+    controller: WorkflowController | None = None,
+) -> Page:
     """Fill the WeChat sticker/image-post editor without publishing."""
-    print("[13/17] Checking WeChat login...")
-    _run_step("Checking WeChat login", lambda: _check_login(page))
+    controller = controller or CLIWorkflowController()
+    controller.step("wechat", "checking_login", "检查登录和目标公众号")
+    _run_step(
+        "Checking WeChat login",
+        lambda: _check_login(page, controller),
+    )
 
-    print("[14/17] Opening WeChat sticker editor...")
+    controller.step("wechat", "opening_editor", "打开贴图编辑器")
     editor = _run_step("Opening WeChat sticker editor", lambda: _open_sticker_editor(page))
 
-    print(f"[15/17] Uploading {len(post.wechat.images)} WeChat images...")
+    controller.step(
+        "wechat",
+        "uploading_images",
+        f"上传 {len(post.wechat.images)} 张图片",
+    )
     _run_step(
         "Uploading WeChat images",
         lambda: _upload_images(editor, post.wechat.images),
     )
 
-    print("[16/17] Filling WeChat title and content...")
+    controller.step("wechat", "filling_content", "填写标题和正文")
     _run_step(
         "Filling WeChat title and content",
         lambda: _fill_text(editor, post.wechat),

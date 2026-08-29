@@ -10,10 +10,20 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from ..content import ContentError
+from .publish_manager import (
+    PublishManager,
+    PublisherAlreadyPublishedError,
+    PublisherBusyError,
+    PublishManagerError,
+    PublisherNotWaitingError,
+)
+from .publish_state import PublishStateError, mark_unpublished
 from .storage import (
     ImageData,
     StorageError,
     get_image_path,
+    get_post_folder,
     get_post_detail,
     list_post_summaries,
     save_post,
@@ -25,9 +35,42 @@ WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
 
-app = FastAPI(title="Alarkive Publisher", version="0.1.2")
+app = FastAPI(title="Alarkive Publisher", version="0.1.3")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+publish_manager = PublishManager()
+
+
+def _load_web_post(post_id: str) -> dict:
+    post = get_post_detail(post_id)
+    post["publish_state"] = publish_manager.reconcile_post_if_needed(post_id)
+    post["browser_open"] = publish_manager.browser_open_for(post_id)
+    return post
+
+
+def _render_detail_error(
+    request: Request,
+    post_id: str,
+    message: str,
+    *,
+    status_code: int = 409,
+) -> HTMLResponse:
+    try:
+        post = _load_web_post(post_id)
+    except (StorageError, PublishStateError):
+        return templates.TemplateResponse(
+            request=request,
+            name="not_found.html",
+            context={"message": "任务不存在，或任务文件已损坏。"},
+            status_code=404,
+        )
+    post["action_error"] = message
+    return templates.TemplateResponse(
+        request=request,
+        name="detail.html",
+        context={"post": post},
+        status_code=status_code,
+    )
 
 
 def _form_values(
@@ -73,10 +116,19 @@ async def home() -> RedirectResponse:
 
 @app.get("/posts", response_class=HTMLResponse, name="post_list")
 async def post_list(request: Request) -> HTMLResponse:
+    posts = list_post_summaries()
+    for post in posts:
+        try:
+            post_state = publish_manager.reconcile_post_if_needed(post["id"])
+            post["published"] = post_state["published"]
+            post["published_at"] = post_state["published_at"]
+        except (StorageError, PublishStateError):
+            # A malformed runtime sidecar must not hide a valid content list.
+            pass
     return templates.TemplateResponse(
         request=request,
         name="posts.html",
-        context={"posts": list_post_summaries()},
+        context={"posts": posts},
     )
 
 
@@ -178,8 +230,8 @@ async def image_file(post_id: str, image_name: str) -> FileResponse:
 @app.get("/posts/{post_id}", response_class=HTMLResponse, name="post_detail")
 async def post_detail(request: Request, post_id: str) -> HTMLResponse:
     try:
-        post = get_post_detail(post_id)
-    except StorageError:
+        post = _load_web_post(post_id)
+    except (StorageError, PublishStateError):
         return templates.TemplateResponse(
             request=request,
             name="not_found.html",
@@ -193,10 +245,73 @@ async def post_detail(request: Request, post_id: str) -> HTMLResponse:
     )
 
 
+@app.post("/posts/{post_id}/publish", name="publish_post")
+async def publish_post(request: Request, post_id: str) -> Response:
+    try:
+        publish_manager.start_publish(post_id)
+    except PublisherBusyError as exc:
+        return _render_detail_error(request, post_id, str(exc))
+    except PublisherAlreadyPublishedError as exc:
+        return _render_detail_error(request, post_id, str(exc))
+    except (StorageError, ContentError, PublishStateError) as exc:
+        return _render_detail_error(request, post_id, str(exc), status_code=400)
+    except Exception:
+        LOGGER.exception("启动发布准备流程失败：%s", post_id)
+        return _render_detail_error(
+            request,
+            post_id,
+            "无法启动发布准备流程，请检查终端日志。",
+            status_code=500,
+        )
+    return RedirectResponse(url=f"/posts/{post_id}", status_code=303)
+
+
+@app.post("/posts/{post_id}/publish/continue", name="continue_publish")
+async def continue_publish(request: Request, post_id: str) -> Response:
+    try:
+        publish_manager.continue_publish(post_id)
+    except PublisherNotWaitingError as exc:
+        return _render_detail_error(request, post_id, str(exc))
+    except (StorageError, PublishStateError) as exc:
+        return _render_detail_error(request, post_id, str(exc), status_code=400)
+    return RedirectResponse(url=f"/posts/{post_id}", status_code=303)
+
+
+@app.post("/posts/{post_id}/mark-unpublished", name="mark_unpublished_post")
+async def mark_unpublished_post(request: Request, post_id: str) -> Response:
+    try:
+        # This action intentionally calls the pure local-marker operation only.
+        # It never consults or changes the active Publisher job.
+        post_folder = get_post_folder(post_id)
+        mark_unpublished(post_folder)
+    except (StorageError, PublishStateError) as exc:
+        return _render_detail_error(request, post_id, str(exc), status_code=400)
+    return RedirectResponse(url=f"/posts/{post_id}", status_code=303)
+
+
+@app.post("/posts/{post_id}/publish/close-browser", name="close_publish_browser")
+async def close_publish_browser(request: Request, post_id: str) -> Response:
+    try:
+        publish_manager.close_browser(post_id)
+    except (PublishManagerError, StorageError, PublishStateError) as exc:
+        return _render_detail_error(request, post_id, str(exc))
+    return RedirectResponse(url=f"/posts/{post_id}", status_code=303)
+
+
+@app.get("/api/posts/{post_id}/publish-state", name="publish_state_api")
+async def publish_state_api(post_id: str) -> dict:
+    try:
+        state = publish_manager.reconcile_post_if_needed(post_id)
+        state["browser_open"] = publish_manager.browser_open_for(post_id)
+        return state
+    except (StorageError, PublishStateError):
+        raise HTTPException(status_code=404, detail="发布状态不存在")
+
+
 def main() -> None:
     host = os.environ.get("ALARKIVE_WEB_HOST", "127.0.0.1")
     port = int(os.environ.get("ALARKIVE_WEB_PORT", "8000"))
-    print("Alarkive Publisher Web Content Manager v0.1.1")
+    print("Alarkive Publisher Web Content Manager v0.1.3")
     print(f"Open http://{host}:{port}")
     uvicorn.run(app, host=host, port=port)
 

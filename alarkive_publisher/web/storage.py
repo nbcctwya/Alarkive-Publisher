@@ -12,6 +12,8 @@ from pathlib import Path
 from os import PathLike
 from typing import Any, Mapping, Sequence
 
+from .publish_state import PublishStateError, default_publish_state, load_publish_state
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -278,6 +280,11 @@ def _created_display(value: str) -> str:
 
 def _summary(directory: Path, manifest: dict[str, Any]) -> dict[str, Any]:
     first_images = manifest["platforms"][PLATFORMS[0]]["images"]
+    try:
+        publish_state = load_publish_state(directory)
+    except PublishStateError as exc:
+        LOGGER.warning("任务 %s 的发布状态损坏，按默认状态显示：%s", directory, exc)
+        publish_state = default_publish_state()
     return {
         "id": manifest["id"],
         "name": manifest["name"],
@@ -287,6 +294,8 @@ def _summary(directory: Path, manifest: dict[str, Any]) -> dict[str, Any]:
         "platforms": [PLATFORM_LABELS[platform] for platform in PLATFORMS if platform in manifest["platforms"]],
         "manifest": manifest,
         "directory": directory,
+        "published": publish_state["published"],
+        "published_at": publish_state["published_at"],
     }
 
 
@@ -320,6 +329,12 @@ def _validated_task_directory(post_id: str, posts_root: Path | str | None = None
     if not directory.is_dir():
         raise StorageError("任务不存在。")
     return directory
+
+
+def get_post_folder(post_id: str, posts_root: Path | str | None = None) -> Path:
+    """Return a validated package directory without reading its manifest."""
+
+    return _validated_task_directory(post_id, posts_root)
 
 
 def get_post_detail(post_id: str, posts_root: Path | str | None = None) -> dict[str, Any]:
@@ -356,6 +371,7 @@ def get_post_detail(post_id: str, posts_root: Path | str | None = None) -> dict[
         "platform_contents": platform_contents,
         "images": images,
         "directory": directory,
+        "publish_state": load_publish_state(directory),
     }
 
 

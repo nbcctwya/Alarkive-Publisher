@@ -8,7 +8,7 @@ from pathlib import Path
 from alarkive_publisher.content import ContentError, load_post
 
 
-VERSION = "v0.1.2"
+VERSION = "v0.1.3"
 
 
 def _configure_output_encoding() -> None:
@@ -94,9 +94,8 @@ def main() -> int:
     print()
 
     try:
-        from alarkive_publisher.xiaohongshu import start_browser, run_xiaohongshu
-        from alarkive_publisher.baijiahao import run_baijiahao
-        from alarkive_publisher.wechat import run_wechat
+        from alarkive_publisher.workflow import run_publisher_workflow
+        from alarkive_publisher.workflow_controller import CLIWorkflowController
     except ModuleNotFoundError as exc:
         if exc.name != "playwright":
             raise
@@ -110,99 +109,42 @@ def main() -> int:
     project_root = Path(__file__).resolve().parent
     debug_dir = project_root / "debug"
     debug_dir.mkdir(parents=True, exist_ok=True)
-    context = None
-    playwright = None
-    page = None
-    current_step = "Starting browser"
-    failure_screenshot = "xiaohongshu-failure.png"
+    browser = {"playwright": None, "context": None, "page": None}
+
+    def remember_browser(playwright, context, page) -> None:
+        browser.update(playwright=playwright, context=context, page=page)
 
     try:
-        current_step = "Starting browser"
         print("[2/17] Starting browser...")
-        playwright, context, page = start_browser(project_root)
-
-        print()
-        print("--- Xiaohongshu ---")
-        print()
-        current_step = "Xiaohongshu"
-        run_xiaohongshu(page, post)
-        print("[7/17] Xiaohongshu ready.")
-        print()
-        print("================================")
-        print("Xiaohongshu ready.")
-        print()
-        print("✓ Images uploaded")
-        print("✓ Title filled")
-        print("✓ Content filled")
-        print()
-        print("The Publish button was NOT clicked.")
-        print("Please inspect Xiaohongshu in the browser.")
-        print()
-        print("Press Enter to continue to Baijiahao...")
-        print("================================")
-        input()
-
-        print()
-        print("--- Baijiahao ---")
-        print()
-        current_step = "Baijiahao"
-        failure_screenshot = "baijiahao-failure.png"
-        run_baijiahao(page, post)
-        print("[12/17] Baijiahao ready.")
-        print()
-        print("================================")
-        print("Baijiahao ready.")
-        print()
-        print("✓ Images inserted")
-        print("✓ Title filled")
-        print("✓ Content filled")
-        print()
-        print("The Publish button was NOT clicked.")
-        print("Please inspect Baijiahao in the browser.")
-        print()
-        print("Press Enter to continue to WeChat...")
-        print("================================")
-        input()
-
-        print()
-        print("--- WeChat ---")
-        print()
-        current_step = "WeChat"
-        failure_screenshot = "wechat-failure.png"
-        page = run_wechat(page, post)
-        print("[17/17] WeChat ready.")
-        print()
-        print("================================")
-        print("WeChat ready.")
-        print()
-        print("✓ Images uploaded")
-        print("✓ Title filled")
-        print("✓ Content filled")
-        print()
-        print("DRY RUN COMPLETE")
-        print()
-        print("The final Publish button was NOT clicked.")
-        print("Please inspect the WeChat sticker post manually in the browser.")
-        print()
-        print("Press Enter to close Alarkive Publisher...")
-        print("================================")
-        input()
+        run_publisher_workflow(
+            post,
+            project_root,
+            CLIWorkflowController(),
+            on_browser_started=remember_browser,
+        )
     except Exception as exc:
         print()
-        error_step = getattr(exc, "step", current_step)
+        error_step = getattr(exc, "step", "Publisher workflow")
         print(f"ERROR during {error_step} step:", file=sys.stderr)
         print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
         traceback.print_exception(exc, file=sys.stderr)
-        if current_step == "WeChat" and context is not None and context.pages:
-            page = context.pages[-1]
+        page = browser["page"]
+        context = browser["context"]
         if page is not None:
             try:
-                screenshot_path = debug_dir / failure_screenshot
-                page.screenshot(path=str(screenshot_path), full_page=True)
-                print(
-                    f"Debug screenshot saved to: {screenshot_path}",
-                    file=sys.stderr,
+                error_text = f"{error_step} {exc}".lower()
+                screenshot_name = (
+                    "xiaohongshu-failure.png"
+                    if "xiaohongshu" in error_text
+                    else "baijiahao-failure.png"
+                    if "baijiahao" in error_text
+                    else "wechat-failure.png"
+                    if "wechat" in error_text
+                    else "publisher-failure.png"
                 )
+                screenshot_path = debug_dir / screenshot_name
+                page.screenshot(path=str(screenshot_path), full_page=True)
+                print(f"Debug screenshot saved to: {screenshot_path}", file=sys.stderr)
             except Exception as screenshot_error:
                 print(
                     f"Could not save debug screenshot: {type(screenshot_error).__name__}: "
@@ -210,26 +152,22 @@ def main() -> int:
                     file=sys.stderr,
                 )
         if context is not None:
-            print(
-                "The browser was left open for inspection. "
-                "Press Enter to close it..."
-            )
+            print("The browser was left open for inspection. Press Enter to close it...")
             try:
                 input()
             except EOFError:
                 pass
-        return 1
-    finally:
-        if context is not None:
             try:
                 context.close()
             except Exception:
                 pass
+        playwright = browser["playwright"]
         if playwright is not None:
             try:
                 playwright.stop()
             except Exception:
                 pass
+        return 1
 
     return 0
 

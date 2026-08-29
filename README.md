@@ -1,4 +1,4 @@
-# Alarkive Publisher v0.1.2
+# Alarkive Publisher v0.1.3
 
 当前完整工作流为：
 
@@ -14,7 +14,9 @@ CLI Publisher
 小红书 → 百家号 → 微信公众号贴图
 ```
 
-Web Content Manager 负责创建 Package；CLI Publisher 负责读取 Package 并执行三个平台的 Playwright Dry Run。两者只通过 `manifest.json`、`content/` 和 `images/` 通信。当前仍然不会点击任何平台的最终“发布/发表”按钮。
+Web Content Manager 负责创建 Package；CLI Publisher 负责读取 Package 并执行三个平台的 Playwright Dry Run。Package 内容仍然只由 `manifest.json`、`content/` 和 `images/` 组成；v0.1.3 的运行状态另存为 Publisher sidecar。当前仍然不会点击任何平台的最终“发布/发表”按钮。
+
+v0.1.3 将 Publisher 接入 Web Content Manager：在任务详情页点击“发布”即可启动后台准备流程，并在网页中查看离散步骤、登录/人工检查等待点和失败信息。每个进程同时只允许一个 Web Publisher 使用共享的 `.browser-data/` profile。
 
 ## 安装
 
@@ -69,6 +71,7 @@ Package 目录结构如下：
 posts/
 └── 20260829-153400-a7c3/
     ├── manifest.json
+    ├── publish-state.json       # Publisher Runtime sidecar，可选
     ├── content/
     │   ├── xiaohongshu.md
     │   ├── baijiahao.md
@@ -80,6 +83,8 @@ posts/
 ```
 
 `manifest.json` 是 Package v0.1 的唯一元数据来源，包含任务 ID、名称、带时区的 `created_at`，以及每个平台自己的 `title`、`content_file` 和有序 `images` 列表。
+
+`publish-state.json` 不属于 Package 内容，也不是 `manifest.json` 的一部分。旧任务没有这个文件时，Web 界面按“未发布 / workflow idle”处理；Publisher 会在需要时以原子方式创建或更新它。Package Loader 不要求该文件存在。
 
 正文使用 UTF-8 Markdown 原文保存。Package Loader 不会删除 `**`、转换 HTML、解析富文本或修改换行、空行、中文和 Emoji。Publisher 运行时才根据平台渲染 Markdown，Package 文件本身不会被改写。
 
@@ -139,7 +144,21 @@ Publisher 根据平台处理：
 人工检查（按 Enter 关闭浏览器）
 ```
 
-三个平台仍然都只填写内容、上传图片并停在最终发布按钮之前。没有 Web 发布按钮、自动发布选项或 `--publish` 参数。
+CLI 仍通过控制器使用 Enter 暂停。三个平台仍然都只填写内容、上传图片并停在最终发布按钮之前。
+
+## 使用 Web Publisher
+
+在图文详情页点击“发布”后，任务会立即显示“已发布”，并在后台启动一个共享浏览器流程。这里的“已发布”只是 Alarkive 本地内容管理状态，表示用户点击过 Web 页面里的“发布”；它不表示 Alarkive 已确认小红书、百家号和微信公众号真正发布成功。
+
+每个平台会依次经历检查登录、打开编辑器、上传图片、填写内容和“已准备完成”。需要扫码登录、选择公众号或人工检查时，页面会显示等待状态和“继续”按钮。三个平台共用同一个浏览器窗口：小红书或百家号准备完成后请保持浏览器打开，并在网页点击“继续”；微信公众号准备完成后，点击“结束流程并关闭浏览器”，流程才会变为 `completed`。如果用户提前手工关闭浏览器，流程会记录为 `failed`，不会自动重新打开或恢复。
+
+网页通过每秒轮询 `GET /api/posts/{id}/publish-state` 获取状态。整体状态包括 `idle`、`running`、`waiting`、`completed`、`failed` 和 `interrupted`；平台状态包括 `pending`、`running`、`waiting`、`ready` 和 `failed`。`completed` 只表示三个编辑器的内容准备流程已完成，不表示平台真正发布成功。服务重启后，找不到对应后台任务的 `running`/`waiting` 状态会显示为 `interrupted`，不会自动恢复。
+
+点击“重新置为未发布”只会把 `published` 改为 `false`、把 `published_at` 改为 `null`。它不会删除 Package 或状态文件、重跑/停止 Publisher、关闭浏览器、清空 workflow、修改 manifest/Markdown/图片、撤回平台内容或调用平台。即使 Publisher 正在运行，也只改变这两个本地标记，后台流程继续执行。
+
+## 发布安全边界
+
+v0.1.3 仍然绝对不会自动点击小红书、百家号或微信公众号的最终按钮，包括“发布”“发表”“立即发布”“确认发布”“群发”等。Publisher 只打开编辑器、上传图片、填写标题和正文，并停在最终发布页。若用户确实要发布，仍需在打开的浏览器中手工点击平台按钮。
 
 ### Package 错误
 
@@ -150,7 +169,7 @@ Error: manifest.json not found.
 This folder is not a valid Alarkive Package v0.1.
 ```
 
-Package Loader 是只读的，不会修改 `manifest.json`、Markdown 或图片文件。旧版 `xiaohongshu/*.txt`、`baijiahao/*.txt`、`wechat/*.txt` 目录格式不再是主流程，也不由 v0.1.2 的 `main.py` 读取。
+Package Loader 是只读的，不会修改 `manifest.json`、Markdown 或图片文件。旧版 `xiaohongshu/*.txt`、`baijiahao/*.txt`、`wechat/*.txt` 目录格式不再是主流程，也不由 v0.1.3 的 `main.py` 读取。
 
 ## 手工登录
 

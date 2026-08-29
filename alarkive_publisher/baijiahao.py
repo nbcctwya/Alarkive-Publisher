@@ -7,6 +7,7 @@ from playwright.sync_api import Locator, Page, TimeoutError
 
 from .content import PlatformContent, PostContent
 from .renderer import RenderedContent, render_for_platform
+from .workflow_controller import CLIWorkflowController, WorkflowController
 from .xiaohongshu import PublisherError, _run_step
 
 
@@ -91,7 +92,7 @@ def _is_login_page(page: Page) -> bool:
     ) is not None
 
 
-def _check_login(page: Page) -> None:
+def _check_login(page: Page, controller: WorkflowController | None = None) -> None:
     page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
     _wait_for_dom(page)
     if not _is_login_page(page):
@@ -99,10 +100,14 @@ def _check_login(page: Page) -> None:
 
     # Login is intentionally manual. The persistent browser context keeps the
     # resulting session for later runs.
-    print("Baijiahao is not logged in.")
-    print("Please complete login manually in the browser.")
-    print("Press Enter after login is complete...")
-    input()
+    if controller is None:
+        controller = CLIWorkflowController()
+    controller.wait_for_user(
+        "baijiahao",
+        "login",
+        "需要登录百家号。请在打开的浏览器中完成登录。",
+        "登录完成后继续。",
+    )
 
     page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
     _wait_for_dom(page)
@@ -671,15 +676,23 @@ def _insert_images(page: Page, editor: Locator, images: tuple[Path, ...]) -> Non
     _wait_for_editor_images(page, editor, before_count + len(images))
 
 
-def run_baijiahao(page: Page, post: PostContent) -> None:
+def run_baijiahao(
+    page: Page,
+    post: PostContent,
+    controller: WorkflowController | None = None,
+) -> None:
     """Fill a Baijiahao article and insert its manifest images without publishing."""
-    print("[8/17] Checking Baijiahao login...")
-    _run_step("Checking Baijiahao login", lambda: _check_login(page))
+    controller = controller or CLIWorkflowController()
+    controller.step("baijiahao", "checking_login", "检查登录")
+    _run_step(
+        "Checking Baijiahao login",
+        lambda: _check_login(page, controller),
+    )
 
-    print("[9/17] Opening Baijiahao editor...")
+    controller.step("baijiahao", "opening_editor", "打开发布页")
     _run_step("Opening Baijiahao editor", lambda: _open_editor(page))
 
-    print("[10/17] Filling Baijiahao title and content...")
+    controller.step("baijiahao", "filling_content", "填写标题和正文")
     body: Locator | None = None
 
     def fill_content() -> None:
@@ -692,8 +705,10 @@ def run_baijiahao(page: Page, post: PostContent) -> None:
     if body is None:
         raise PublisherError("Filling Baijiahao content", "Body editor was not retained.")
 
-    print(
-        f"[11/17] Uploading {len(post.baijiahao.images)} Baijiahao images into content..."
+    controller.step(
+        "baijiahao",
+        "uploading_images",
+        f"向正文插入 {len(post.baijiahao.images)} 张图片",
     )
     _run_step(
         "Uploading Baijiahao images",

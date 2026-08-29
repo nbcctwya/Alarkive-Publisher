@@ -9,6 +9,81 @@
     </div>
 </div>
 
+{% if post.action_error %}
+<div class="alert alert-error" role="alert">{{ post.action_error }}</div>
+{% endif %}
+
+{% set publish_state = post.publish_state %}
+<section
+    class="detail-section publish-section"
+    id="publish-panel"
+    data-post-id="{{ post.id }}"
+    data-publish-url="{{ url_for('publish_post', post_id=post.id) }}"
+    data-continue-url="{{ url_for('continue_publish', post_id=post.id) }}"
+    data-reset-url="{{ url_for('mark_unpublished_post', post_id=post.id) }}"
+    data-close-url="{{ url_for('close_publish_browser', post_id=post.id) }}"
+    data-browser-open="{{ 'true' if post.browser_open else 'false' }}"
+    data-state-url="{{ url_for('publish_state_api', post_id=post.id) }}"
+>
+    <div class="section-heading">
+        <div>
+            <p class="eyebrow">PUBLISHER</p>
+            <h2>发布状态</h2>
+        </div>
+        <span class="live-note">状态每秒更新</span>
+    </div>
+    <div class="publish-summary">
+        <div>
+            <span class="status-badge {% if publish_state.published %}status-published{% else %}status-unpublished{% endif %}" id="content-published-status">
+                {% if publish_state.published %}✓ 已发布{% else %}● 未发布{% endif %}
+            </span>
+            <p class="published-at" id="published-at">
+                {% if publish_state.published_at %}{{ publish_state.published_at }}{% endif %}
+            </p>
+        </div>
+        <div class="publish-actions" id="publish-actions">
+            {% if publish_state.published %}
+            <form method="post" action="{{ url_for('mark_unpublished_post', post_id=post.id) }}" onsubmit="return confirm('仅将 Alarkive 中的状态改为“未发布”。不会撤回平台内容，也不会操作浏览器。');">
+                <button class="button button-secondary" type="submit">重新置为未发布</button>
+            </form>
+            {% else %}
+            <form method="post" action="{{ url_for('publish_post', post_id=post.id) }}" onsubmit="return confirm('开始发布准备流程？\n\nAlarkive 会自动填写三个平台，但不会点击平台真正的发布按钮。');">
+                <button class="button button-primary" type="submit">发布</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="workflow-block" aria-live="polite">
+        <div class="workflow-heading">
+            <h3>发布准备流程</h3>
+            <span id="workflow-status">{{ publish_state.workflow.status }}</span>
+        </div>
+        <div class="workflow-platforms" id="workflow-platforms">
+            {% for key, label in [('xiaohongshu', '小红书'), ('baijiahao', '百家号'), ('wechat', '微信公众号')] %}
+            <div class="workflow-platform">
+                <span>{{ label }}</span>
+                <span data-platform-status="{{ key }}">{{ publish_state.workflow.platforms[key].status }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        <p class="workflow-message" id="workflow-message">{{ publish_state.workflow.message or '' }}</p>
+        <p class="workflow-error" id="workflow-error">
+            {% if publish_state.workflow.error %}{{ publish_state.workflow.error.message }}{% endif %}
+        </p>
+        <div id="workflow-continue">
+            {% if publish_state.workflow.status == 'waiting' %}
+            <form method="post" action="{{ url_for('continue_publish', post_id=post.id) }}">
+                <button class="button button-primary" type="submit">
+                    {% if publish_state.workflow.current_platform == 'wechat' and publish_state.workflow.current_step == 'ready' %}结束流程并关闭浏览器{% elif publish_state.workflow.current_platform == 'xiaohongshu' %}继续到百家号{% elif publish_state.workflow.current_platform == 'baijiahao' %}继续到微信公众号{% else %}继续{% endif %}
+                </button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+    <p class="publisher-note">Alarkive v0.1.3 只准备内容，不会点击小红书、百家号或微信公众号的最终“发布/发表/群发”按钮。如需真正发布，请在浏览器中手工操作。流程进行中请保持这个浏览器窗口打开；小红书完成后请点击网页里的“继续到百家号”。</p>
+</section>
+
 <section class="detail-section">
     <div class="section-heading">
         <div>
@@ -43,5 +118,5 @@
         {% endfor %}
     </div>
 </section>
+<script src="{{ url_for('static', path='app.js') }}"></script>
 {% endblock %}
-
