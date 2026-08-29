@@ -8,7 +8,16 @@ from pathlib import Path
 from alarkive_publisher.content import ContentError, load_post
 
 
-VERSION = "v0.1.0"
+VERSION = "v0.1.1"
+
+
+def _configure_output_encoding() -> None:
+    """Keep Unicode task names and titles printable in Windows consoles."""
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
 
 
 def parse_args() -> argparse.Namespace:
@@ -23,12 +32,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    _configure_output_encoding()
     args = parse_args()
     post_folder = args.post_folder.expanduser().resolve()
 
     print(f"Alarkive Publisher {VERSION}")
     print()
-    print("[1/17] Loading content...")
+    print("[1/17] Loading Alarkive Package...")
 
     try:
         post = load_post(post_folder)
@@ -37,7 +47,16 @@ def main() -> int:
         return 1
 
     print()
-    print("Post folder:")
+    print("Package:")
+    print(post.name)
+    print()
+    print("ID:")
+    print(post.id)
+    print()
+    print("Created:")
+    print(post.created_at)
+    print()
+    print("Package folder:")
     print(post.folder)
     print()
     print("Xiaohongshu")
@@ -47,12 +66,20 @@ def main() -> int:
     print("Content:")
     print(f"{len(post.xiaohongshu.body)} characters")
     print()
+    print("Images:")
+    for image in post.xiaohongshu.images:
+        print(image.name)
+    print()
     print("Baijiahao")
     print("Title:")
     print(post.baijiahao.title)
     print()
     print("Content:")
     print(f"{len(post.baijiahao.body)} characters")
+    print()
+    print("Images:")
+    for image in post.baijiahao.images:
+        print(image.name)
     print()
     print("WeChat")
     print("Title:")
@@ -62,7 +89,7 @@ def main() -> int:
     print(f"{len(post.wechat.body)} characters")
     print()
     print("Images:")
-    for image in post.images:
+    for image in post.wechat.images:
         print(image.name)
     print()
 

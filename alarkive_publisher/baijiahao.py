@@ -518,7 +518,7 @@ def _insert_images(page: Page, editor: Locator, images: tuple[Path, ...]) -> Non
 
 
 def run_baijiahao(page: Page, post: PostContent) -> None:
-    """Fill a Baijiahao article and insert shared images without publishing."""
+    """Fill a Baijiahao article and insert its manifest images without publishing."""
     print("[8/17] Checking Baijiahao login...")
     _run_step("Checking Baijiahao login", lambda: _check_login(page))
 
@@ -538,8 +538,10 @@ def run_baijiahao(page: Page, post: PostContent) -> None:
     if body is None:
         raise PublisherError("Filling Baijiahao content", "Body editor was not retained.")
 
-    print(f"[11/17] Uploading {len(post.images)} Baijiahao images into content...")
+    print(
+        f"[11/17] Uploading {len(post.baijiahao.images)} Baijiahao images into content..."
+    )
     _run_step(
         "Uploading Baijiahao images",
-        lambda: _insert_images(page, body, post.images),
+        lambda: _insert_images(page, body, post.baijiahao.images),
     )

@@ -25,7 +25,7 @@ WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
 
-app = FastAPI(title="Alarkive Publisher", version="0.1.0")
+app = FastAPI(title="Alarkive Publisher", version="0.1.1")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
@@ -196,7 +196,7 @@ async def post_detail(request: Request, post_id: str) -> HTMLResponse:
 def main() -> None:
     host = os.environ.get("ALARKIVE_WEB_HOST", "127.0.0.1")
     port = int(os.environ.get("ALARKIVE_WEB_PORT", "8000"))
-    print(f"Alarkive Publisher Web Content Manager v0.1.0")
+    print("Alarkive Publisher Web Content Manager v0.1.1")
     print(f"Open http://{host}:{port}")
     uvicorn.run(app, host=host, port=port)
 

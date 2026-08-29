@@ -447,10 +447,10 @@ def run_xiaohongshu(page: Page, post: PostContent) -> None:
     print("[4/17] Opening Xiaohongshu publisher...")
     _run_step("Opening Xiaohongshu publisher", lambda: _open_image_publisher(page))
 
-    print(f"[5/17] Uploading {len(post.images)} Xiaohongshu images...")
+    print(f"[5/17] Uploading {len(post.xiaohongshu.images)} Xiaohongshu images...")
     _run_step(
         "Uploading Xiaohongshu images",
-        lambda: _upload_images(page, post.images),
+        lambda: _upload_images(page, post.xiaohongshu.images),
     )
 
     print("[6/17] Filling Xiaohongshu title and content...")

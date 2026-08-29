@@ -1,69 +1,18 @@
-# Alarkive Publisher v0.1.0
+# Alarkive Publisher v0.1.1
 
-当前项目包含两个相互独立的部分：
-
-1. Web Content Manager：在网页中创建、上传、查看多平台图文任务，并自动生成 Alarkive Package。
-2. Existing Publisher Dry Run：沿用 v0.0.3 的 Playwright 流程，读取旧版内容文件夹，依次填写三个平台，然后停在发布按钮之前。
-
-当前版本不会自动登录，也绝不会点击小红书、百家号或微信公众号的最终“发布/发表”按钮。
-
-## Web Content Manager
-
-### 启动
-
-在项目根目录执行：
-
-```powershell
-python -m alarkive_publisher.web.app
-```
-
-然后访问：
+当前完整工作流为：
 
 ```text
-http://127.0.0.1:8000
+Web Content Manager
+        ↓
+生成 Alarkive Package v0.1
+        ↓
+CLI Publisher
+        ↓
+小红书 → 百家号 → 微信公众号贴图
 ```
 
-终端也会打印访问地址。根路径会自动跳转到图文列表。Web Content Manager 当前只负责创建、列表和查看，不调用 Playwright，不管理发布状态。
-
-### 创建图文
-
-点击“上传图文”，填写任务名称、小红书/百家号/微信公众号三个平台的标题和正文，选择一张或多张 PNG 图片。图片可以拖动缩略图调整顺序，也提供上下移动按钮。保存后会跳转到任务详情页。
-
-正文统一以 UTF-8 Markdown 原文保存，`**粗体**`、Emoji、换行和空行不会被 Web Content Manager 解析或改写。
-
-所有任务保存在项目根目录的 `posts/` 中。每个任务使用系统生成的安全 ID 作为目录名，不使用标题作为路径：
-
-```text
-posts/
-└── 20260829-125432-a7c3/
-    ├── manifest.json
-    ├── content/
-    │   ├── xiaohongshu.md
-    │   ├── baijiahao.md
-    │   └── wechat.md
-    └── images/
-        ├── 01.png
-        ├── 02.png
-        └── 03.png
-```
-
-`manifest.json` 使用 v0.1 格式，包含 `schema_version`、任务 ID、名称、带时区的 `created_at`、三个平台的标题、正文路径和有序图片路径。列表按 `created_at` 倒序显示；损坏或无法解析的任务会被跳过并在终端记录警告。
-
-### 文件保存位置
-
-```text
-posts/
-```
-
-Web Content Manager 生成的是新的 Package v0.1 格式。当前旧版 Playwright Publisher 仍读取下面“Existing Publisher Dry Run”中的旧版内容文件夹格式，暂不自动接线。
-
-## 当前支持
-
-- 小红书图文
-- 百家号图文
-- 微信公众号贴图 / 图片消息轻量图文
-
-微信公众号部分不是传统公众号长文章编辑器，不处理文章作者、封面、摘要、群发或其他声明设置。
+Web Content Manager 负责创建 Package；CLI Publisher 负责读取 Package 并执行三个平台的 Playwright Dry Run。两者只通过 `manifest.json`、`content/` 和 `images/` 通信。当前仍然不会点击任何平台的最终“发布/发表”按钮。
 
 ## 安装
 
@@ -96,85 +45,65 @@ $env:ALARKIVE_BROWSER_CHANNEL = "chromium"
 $env:ALARKIVE_BROWSER_DATA_DIR = "D:\Alarkive\browser-data"
 ```
 
-## 内容文件夹
+## 创建 Alarkive Package
 
-目录必须是：
-
-```text
-post-folder/
-├── xiaohongshu/
-│   └── 小红书标题.txt
-├── baijiahao/
-│   └── 百家号标题.txt
-├── wechat/
-│   └── 微信贴图标题.txt
-└── images/
-    ├── 1.png
-    ├── 2.png
-    ├── 3.png
-    └── 10.png
-```
-
-- 三个平台目录中各只能有一个 `.txt` 文件。
-- 文件名去掉 `.txt` 后就是对应平台标题。
-- TXT 文件内容就是对应平台正文或描述，使用 UTF-8 保存。
-- 三个平台共用 `images/` 中的 PNG 图片。
-- 图片文件名必须是数字加 `.png`，程序按数字排序，因此 `10.png` 会排在 `2.png` 后。
-
-## 运行
-
-在项目根目录执行：
+启动 Web Content Manager：
 
 ```powershell
-python main.py "D:\Alarkive\post-folder"
+python -m alarkive_publisher.web.app
 ```
 
-也可以直接使用虚拟环境中的 Python：
+访问：
+
+```text
+http://127.0.0.1:8000
+```
+
+在网页中填写任务名称、三个平台的标题和正文，选择 PNG 图片并调整顺序，然后点击“保存图文”。任务会保存到项目根目录的 `posts/`，不需要创建或复制任何旧格式目录。
+
+Package 目录结构如下：
+
+```text
+posts/
+└── 20260829-153400-a7c3/
+    ├── manifest.json
+    ├── content/
+    │   ├── xiaohongshu.md
+    │   ├── baijiahao.md
+    │   └── wechat.md
+    └── images/
+        ├── 01.png
+        ├── 02.png
+        └── 03.png
+```
+
+`manifest.json` 是 Package v0.1 的唯一元数据来源，包含任务 ID、名称、带时区的 `created_at`，以及每个平台自己的 `title`、`content_file` 和有序 `images` 列表。
+
+正文使用 UTF-8 Markdown 原文保存。Package Loader 不会删除 `**`、转换 HTML、解析富文本或修改换行、空行、中文和 Emoji。
+
+## 使用 CLI Publisher
+
+直接把 Web 生成的 Package 目录传给 `main.py`：
 
 ```powershell
-.\.venv\Scripts\python.exe main.py .\post-folder
+python main.py ".\posts\20260829-153400-a7c3"
 ```
 
-程序会先打印三个平台的标题、正文字符数和图片顺序，确认读取成功后才启动浏览器。
+也可以使用虚拟环境中的 Python：
 
-## 第一次登录
-
-登录全部由用户手工完成，程序不会读取或保存用户名、密码、手机号或验证码。
-
-### 小红书
-
-如果自动化 profile 尚未登录，终端会提示：
-
-```text
-Xiaohongshu is not logged in.
-Please complete login manually in the browser.
-Press Enter after login is complete...
+```powershell
+.\.venv\Scripts\python.exe main.py ".\posts\20260829-153400-a7c3"
 ```
 
-请在浏览器中手工扫码或登录，完成后回到终端按 Enter。
+Publisher 会在启动浏览器前完整读取并验证：
 
-### 百家号
+- `manifest.json` 和 `schema_version`
+- Package ID 与目录名
+- 三个平台的标题和 Markdown 正文
+- manifest 指定的每个平台图片列表及顺序
+- 所有正文和图片文件是否存在、是否位于 Package 内
 
-小红书检查完成后，按 Enter 进入百家号。如果尚未登录，终端会提示人工登录。完成后回到终端按 Enter，程序会重新检查登录状态。
-
-### 微信公众号
-
-百家号检查完成后，按 Enter 进入微信公众号。如果尚未登录，终端会提示：
-
-```text
-WeChat Official Account is not logged in.
-
-Please complete login manually in the browser.
-This may require scanning a QR code in WeChat.
-
-Press Enter after login is complete...
-```
-
-请在浏览器中完成微信扫码登录。如果账号需要选择公众号，请在浏览器中手工选择目标账号，再按 Enter。登录状态会保存在同一个 `.browser-data/` profile 中。
-
-## 完整 Dry Run
-
-程序严格按下面顺序执行：
+验证通过后才会启动 persistent Chrome profile，并按以下顺序运行：
 
 ```text
 小红书
@@ -190,17 +119,24 @@ Press Enter after login is complete...
 人工检查（按 Enter 关闭浏览器）
 ```
 
-小红书会上传共享图片并填写标题、正文；百家号会填写标题、正文，并按数字顺序将图片插入正文；微信公众号会进入“贴图”而不是传统长文章编辑器，上传共享图片并填写贴图标题和描述。
+三个平台仍然都只填写内容、上传图片并停在最终发布按钮之前。没有 Web 发布按钮、自动发布选项或 `--publish` 参数。
 
-完成后会显示：
+### Package 错误
+
+如果传入的目录不是 Package v0.1，Publisher 会在浏览器启动前报错。例如缺少 manifest 时：
 
 ```text
-DRY RUN COMPLETE
-
-The final Publish button was NOT clicked.
+Error: manifest.json not found.
+This folder is not a valid Alarkive Package v0.1.
 ```
 
-当前版本绝不会点击任何平台的最终发布按钮，也没有 `--publish` 或自动发布参数。
+Package Loader 是只读的，不会修改 `manifest.json`、Markdown 或图片文件。旧版 `xiaohongshu/*.txt`、`baijiahao/*.txt`、`wechat/*.txt` 目录格式不再是主流程，也不由 v0.1.1 的 `main.py` 读取。
+
+## 手工登录
+
+登录全部由用户手工完成，程序不会读取或保存用户名、密码、手机号或验证码。
+
+如果自动化 profile 尚未登录，程序会在终端提示，并保持浏览器打开等待人工登录。微信可能还需要手工选择目标公众号。登录状态会保存在 `.browser-data/` 中。
 
 ## 调试
 

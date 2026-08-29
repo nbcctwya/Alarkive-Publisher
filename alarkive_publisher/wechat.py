@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page, TimeoutError
 
 from .content import PlatformContent, PostContent
@@ -99,9 +100,25 @@ def _is_account_selection_page(page: Page) -> bool:
     )
 
 
-def _check_login(page: Page) -> None:
-    page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
+def _navigate_home(page: Page) -> None:
+    """Navigate to WeChat and tolerate its post-login dashboard redirect."""
+
+    try:
+        # WeChat commonly redirects / to /cgi-bin/home after login. Waiting
+        # for DOMContentLoaded on the first URL can race with that redirect.
+        page.goto(HOME_URL, wait_until="commit", timeout=60_000)
+    except PlaywrightError as exc:
+        message = str(exc)
+        if (
+            "interrupted by another navigation" not in message
+            or not page.url.startswith(HOME_URL)
+        ):
+            raise
     _wait_for_dom(page)
+
+
+def _check_login(page: Page) -> None:
+    _navigate_home(page)
     if _is_login_page(page):
         print("WeChat Official Account is not logged in.")
         print()
@@ -110,8 +127,7 @@ def _check_login(page: Page) -> None:
         print()
         print("Press Enter after login is complete...")
         input()
-        page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
-        _wait_for_dom(page)
+        _navigate_home(page)
         if _is_login_page(page):
             raise PublisherError("Checking WeChat login", "Login was not completed.")
 
@@ -122,8 +138,7 @@ def _check_login(page: Page) -> None:
         print()
         print("Press Enter after entering the target account dashboard...")
         input()
-        page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
-        _wait_for_dom(page)
+        _navigate_home(page)
         if _is_login_page(page) or _is_account_selection_page(page):
             raise PublisherError(
                 "Checking WeChat login",
@@ -383,10 +398,10 @@ def run_wechat(page: Page, post: PostContent) -> Page:
     print("[14/17] Opening WeChat sticker editor...")
     editor = _run_step("Opening WeChat sticker editor", lambda: _open_sticker_editor(page))
 
-    print(f"[15/17] Uploading {len(post.images)} WeChat images...")
+    print(f"[15/17] Uploading {len(post.wechat.images)} WeChat images...")
     _run_step(
         "Uploading WeChat images",
-        lambda: _upload_images(editor, post.images),
+        lambda: _upload_images(editor, post.wechat.images),
     )
 
     print("[16/17] Filling WeChat title and content...")
