@@ -1,8 +1,61 @@
-# Alarkive Publisher v0.0.3
+# Alarkive Publisher v0.1.0
 
-一个最小可运行的 Playwright 工具：从固定格式的内容文件夹读取一份内容，依次打开小红书、百家号和微信公众号“贴图”编辑器，填写标题、正文并上传图片，然后停在三个平台最终发布按钮之前。
+当前项目包含两个相互独立的部分：
+
+1. Web Content Manager：在网页中创建、上传、查看多平台图文任务，并自动生成 Alarkive Package。
+2. Existing Publisher Dry Run：沿用 v0.0.3 的 Playwright 流程，读取旧版内容文件夹，依次填写三个平台，然后停在发布按钮之前。
 
 当前版本不会自动登录，也绝不会点击小红书、百家号或微信公众号的最终“发布/发表”按钮。
+
+## Web Content Manager
+
+### 启动
+
+在项目根目录执行：
+
+```powershell
+python -m alarkive_publisher.web.app
+```
+
+然后访问：
+
+```text
+http://127.0.0.1:8000
+```
+
+终端也会打印访问地址。根路径会自动跳转到图文列表。Web Content Manager 当前只负责创建、列表和查看，不调用 Playwright，不管理发布状态。
+
+### 创建图文
+
+点击“上传图文”，填写任务名称、小红书/百家号/微信公众号三个平台的标题和正文，选择一张或多张 PNG 图片。图片可以拖动缩略图调整顺序，也提供上下移动按钮。保存后会跳转到任务详情页。
+
+正文统一以 UTF-8 Markdown 原文保存，`**粗体**`、Emoji、换行和空行不会被 Web Content Manager 解析或改写。
+
+所有任务保存在项目根目录的 `posts/` 中。每个任务使用系统生成的安全 ID 作为目录名，不使用标题作为路径：
+
+```text
+posts/
+└── 20260829-125432-a7c3/
+    ├── manifest.json
+    ├── content/
+    │   ├── xiaohongshu.md
+    │   ├── baijiahao.md
+    │   └── wechat.md
+    └── images/
+        ├── 01.png
+        ├── 02.png
+        └── 03.png
+```
+
+`manifest.json` 使用 v0.1 格式，包含 `schema_version`、任务 ID、名称、带时区的 `created_at`、三个平台的标题、正文路径和有序图片路径。列表按 `created_at` 倒序显示；损坏或无法解析的任务会被跳过并在终端记录警告。
+
+### 文件保存位置
+
+```text
+posts/
+```
+
+Web Content Manager 生成的是新的 Package v0.1 格式。当前旧版 Playwright Publisher 仍读取下面“Existing Publisher Dry Run”中的旧版内容文件夹格式，暂不自动接线。
 
 ## 当前支持
 

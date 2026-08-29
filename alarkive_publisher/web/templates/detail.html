@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}{{ post.name }} · Alarkive Publisher{% endblock %}
+{% block content %}
+<div class="detail-heading">
+    <div>
+        <a class="back-link" href="{{ url_for('post_list') }}">← 返回图文列表</a>
+        <h1>{{ post.name }}</h1>
+        <p class="detail-meta">创建于 {{ post.created_display }} · 任务 ID <code>{{ post.id }}</code></p>
+    </div>
+</div>
+
+<section class="detail-section">
+    <div class="section-heading">
+        <div>
+            <p class="eyebrow">MEDIA</p>
+            <h2>图片（{{ post.images | length }}）</h2>
+        </div>
+    </div>
+    <div class="detail-image-grid">
+        {% for image in post.images %}
+        <figure class="detail-image-card">
+            <img src="{{ url_for('image_file', post_id=post.id, image_name=image.filename) }}" alt="{{ image.filename }}">
+            <figcaption>{{ image.filename }}</figcaption>
+        </figure>
+        {% endfor %}
+    </div>
+</section>
+
+<section class="detail-section">
+    <div class="section-heading">
+        <div>
+            <p class="eyebrow">PLATFORMS</p>
+            <h2>平台内容</h2>
+        </div>
+    </div>
+    <div class="detail-platforms">
+        {% for platform in post.platform_contents %}
+        <article class="detail-platform">
+            <h3>{{ platform.label }}</h3>
+            <h4>{{ platform.title }}</h4>
+            <pre>{{ platform.body }}</pre>
+        </article>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}
+

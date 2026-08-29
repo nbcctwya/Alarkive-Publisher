@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}上传图文 · Alarkive Publisher{% endblock %}
+{% block content %}
+<div class="page-heading compact-heading">
+    <div>
+        <p class="eyebrow">NEW PACKAGE</p>
+        <h1>上传图文</h1>
+        <p class="muted">一次填写三个平台的内容，自动生成标准化任务目录。</p>
+    </div>
+</div>
+
+{% if error %}
+<div class="alert alert-error" role="alert">{{ error }}</div>
+{% endif %}
+
+<form class="content-form" method="post" action="{{ url_for('create_post') }}" enctype="multipart/form-data" id="post-form">
+    <section class="form-section">
+        <div class="section-heading">
+            <div>
+                <p class="eyebrow">BASIC</p>
+                <h2>任务信息</h2>
+            </div>
+            <span class="required-note">* 必填</span>
+        </div>
+        <label class="field-label" for="name">任务名称 <span>*</span></label>
+        <input class="text-input" id="name" name="name" type="text" value="{{ form.get('name', '') }}" placeholder="例如：Qwen3.8 Flash" required>
+    </section>
+
+    <section class="form-section">
+        <div class="section-heading">
+            <div>
+                <p class="eyebrow">PLATFORMS</p>
+                <h2>平台内容</h2>
+            </div>
+            <span class="muted">三个平台均为必填</span>
+        </div>
+
+        <div class="platform-fields">
+            <fieldset class="platform-card">
+                <legend>小红书</legend>
+                <label class="field-label" for="xiaohongshu_title">标题 <span>*</span></label>
+                <input class="text-input" id="xiaohongshu_title" name="xiaohongshu_title" type="text" value="{{ form.get('xiaohongshu_title', '') }}" required>
+                <label class="field-label" for="xiaohongshu_body">正文 <span>*</span></label>
+                <textarea class="body-input" id="xiaohongshu_body" name="xiaohongshu_body" rows="12" required placeholder="原样输入 Markdown、Emoji 和换行内容">{{ form.get('xiaohongshu_body', '') }}</textarea>
+            </fieldset>
+
+            <fieldset class="platform-card">
+                <legend>百家号</legend>
+                <label class="field-label" for="baijiahao_title">标题 <span>*</span></label>
+                <input class="text-input" id="baijiahao_title" name="baijiahao_title" type="text" value="{{ form.get('baijiahao_title', '') }}" required>
+                <label class="field-label" for="baijiahao_body">正文 <span>*</span></label>
+                <textarea class="body-input" id="baijiahao_body" name="baijiahao_body" rows="12" required placeholder="原样输入 Markdown、Emoji 和换行内容">{{ form.get('baijiahao_body', '') }}</textarea>
+            </fieldset>
+
+            <fieldset class="platform-card">
+                <legend>微信公众号</legend>
+                <label class="field-label" for="wechat_title">标题 <span>*</span></label>
+                <input class="text-input" id="wechat_title" name="wechat_title" type="text" value="{{ form.get('wechat_title', '') }}" required>
+                <label class="field-label" for="wechat_body">正文 <span>*</span></label>
+                <textarea class="body-input" id="wechat_body" name="wechat_body" rows="12" required placeholder="原样输入 Markdown、Emoji 和换行内容">{{ form.get('wechat_body', '') }}</textarea>
+            </fieldset>
+        </div>
+    </section>
+
+    <section class="form-section">
+        <div class="section-heading">
+            <div>
+                <p class="eyebrow">MEDIA</p>
+                <h2>图片</h2>
+            </div>
+            <span class="muted">仅支持 PNG，至少 1 张</span>
+        </div>
+        <div class="upload-zone" id="upload-zone" tabindex="0" role="button" aria-controls="images">
+            <div class="upload-icon">↑</div>
+            <h3>选择 PNG 图片</h3>
+            <p>也可以将图片拖到此处，拖动缩略图调整顺序</p>
+            <label class="button button-secondary upload-button" for="images">选择图片</label>
+            <input id="images" name="images" type="file" accept=".png,image/png" multiple hidden>
+        </div>
+        <p class="upload-error" id="upload-error" role="alert" hidden></p>
+        <div class="preview-grid" id="preview-grid" aria-live="polite"></div>
+    </section>
+
+    <div class="form-actions">
+        <a class="button button-secondary" href="{{ url_for('post_list') }}">取消</a>
+        <button class="button button-primary" type="submit">保存图文</button>
+    </div>
+</form>
+<script src="{{ url_for('static', path='app.js') }}"></script>
+{% endblock %}
+

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Alarkive Publisher{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+    <header class="site-header">
+        <div class="header-inner">
+            <a class="brand" href="{{ url_for('post_list') }}">Alarkive Publisher</a>
+            <nav aria-label="主导航">
+                <a href="{{ url_for('post_list') }}">图文列表</a>
+                <a class="nav-primary" href="{{ url_for('new_post') }}">+ 上传图文</a>
+            </nav>
+        </div>
+    </header>
+    <main class="page-shell">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>
+

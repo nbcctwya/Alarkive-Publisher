@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}图文列表 · Alarkive Publisher{% endblock %}
+{% block content %}
+<div class="page-heading">
+    <div>
+        <p class="eyebrow">CONTENT MANAGER</p>
+        <h1>图文列表</h1>
+        <p class="muted">查看已经保存到 Alarkive 的多平台图文内容。</p>
+    </div>
+    <a class="button button-primary" href="{{ url_for('new_post') }}">+ 上传图文</a>
+</div>
+
+{% if posts %}
+<section class="post-grid" aria-label="图文任务列表">
+    {% for post in posts %}
+    <article class="post-card">
+        <div class="card-topline">
+            <span class="card-label">图文任务</span>
+            <span class="image-count">{{ post.image_count }} 张图片</span>
+        </div>
+        <h2>{{ post.name }}</h2>
+        <p class="created-at">{{ post.created_display }}</p>
+        <p class="platforms">{{ post.platforms | join(' · ') }}</p>
+        <a class="button button-secondary" href="{{ url_for('post_detail', post_id=post.id) }}">查看</a>
+    </article>
+    {% endfor %}
+</section>
+{% else %}
+<section class="empty-state">
+    <div class="empty-icon">＋</div>
+    <h2>还没有图文任务</h2>
+    <p class="muted">上传第一份图文后，它会自动生成标准化 Alarkive Package。</p>
+    <a class="button button-primary" href="{{ url_for('new_post') }}">上传图文</a>
+</section>
+{% endif %}
+{% endblock %}
+

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}找不到任务 · Alarkive Publisher{% endblock %}
+{% block content %}
+<section class="empty-state">
+    <div class="empty-icon">?</div>
+    <h1>找不到任务</h1>
+    <p class="muted">{{ message }}</p>
+    <a class="button button-primary" href="{{ url_for('post_list') }}">返回图文列表</a>
+</section>
+{% endblock %}
+

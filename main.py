@@ -8,7 +8,7 @@ from pathlib import Path
 from alarkive_publisher.content import ContentError, load_post
 
 
-VERSION = "v0.0.3"
+VERSION = "v0.1.0"
 
 
 def parse_args() -> argparse.Namespace:
