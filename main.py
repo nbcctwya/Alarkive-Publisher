@@ -8,7 +8,7 @@ from pathlib import Path
 from alarkive_publisher.content import ContentError, load_post
 
 
-VERSION = "v0.1.1"
+VERSION = "v0.1.2"
 
 
 def _configure_output_encoding() -> None:

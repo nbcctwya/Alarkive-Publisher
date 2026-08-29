@@ -6,6 +6,7 @@ from pathlib import Path
 from playwright.sync_api import Locator, Page, TimeoutError
 
 from .content import PlatformContent, PostContent
+from .renderer import RenderedContent, render_for_platform
 from .xiaohongshu import PublisherError, _run_step
 
 
@@ -282,25 +283,139 @@ def _compact_text(value: str) -> str:
     return re.sub(r"\s+", "", value.replace("\u00a0", " "))
 
 
+def _editor_validation_text(value: str) -> str:
+    # Rich editors usually expose link text but not the URL in inner_text().
+    # Ignore renderer-added list and quote markers for the text-presence check.
+    value = re.sub(r"（(?:https?|mailto):[^）]*）", "", value)
+    value = re.sub(r"(?m)^\s*(?:•|\d+\.)\s+", "", value)
+    return _compact_text(value.replace("「", "").replace("」", ""))
+
+
+def _inject_html(body: Locator, rendered: RenderedContent) -> None:
+    if not rendered.html:
+        raise PublisherError(
+            "Filling Baijiahao content",
+            "The Baijiahao renderer did not produce rich-text HTML.",
+        )
+
+    html = rendered.html
+    try:
+        body.evaluate(
+            """
+            (element, value) => {
+                element.focus();
+                element.innerHTML = value;
+                // Do not identify this as insertFromPaste. Baijiahao treats
+                // that input type as structured-paste mode and disables the
+                // editor's image insertion control while it is active.
+                element.dispatchEvent(new Event('input', { bubbles: true }));
+                element.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            """,
+            html,
+        )
+    except Exception as exc:
+        # Some UEditor versions implement insertHTML more reliably than an
+        # innerHTML assignment. The fallback still uses only renderer output.
+        try:
+            body.evaluate(
+                """
+                (element, value) => {
+                    element.focus();
+                    document.execCommand('selectAll', false, null);
+                    document.execCommand('insertHTML', false, value);
+                    element.dispatchEvent(new Event('input', { bubbles: true }));
+                    element.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                """,
+                html,
+            )
+        except Exception as fallback_exc:
+            raise PublisherError(
+                "Filling Baijiahao content",
+                "Could not inject rendered HTML into the Baijiahao editor: "
+                f"{fallback_exc}",
+            ) from exc
+
+
+def _has_bold_semantics(body: Locator) -> bool:
+    if body.locator("strong, b").count() > 0:
+        return True
+    try:
+        return bool(
+            body.evaluate(
+                """
+                element => Array.from(element.querySelectorAll('*')).some(node => {
+                    const weight = getComputedStyle(node).fontWeight;
+                    return weight === 'bold' || Number(weight) >= 600;
+                })
+                """
+            )
+        )
+    except Exception:
+        return False
+
+
+def _has_list_semantics(body: Locator) -> bool:
+    if body.locator("ul, ol, li").count() > 0:
+        return True
+    try:
+        return bool(
+            body.evaluate(
+                """
+                element => Array.from(element.querySelectorAll('*')).some(node => {
+                    return getComputedStyle(node).listStyleType !== 'none';
+                })
+                """
+            )
+        )
+    except Exception:
+        return False
+
+
 def _fill_body(page: Page, body: Locator, content: PlatformContent) -> None:
-    _fill_editable(body, content.body, page)
+    rendered = render_for_platform("baijiahao", content.body)
+    _inject_html(body, rendered)
     actual = _read_locator_value(body)
-    if content.body and _compact_text(content.body) not in _compact_text(actual):
+    if rendered.text and _editor_validation_text(rendered.text) not in _editor_validation_text(actual):
         raise PublisherError(
             "Filling Baijiahao content",
             "The Baijiahao editor did not contain the provided content after filling.",
         )
+    if "<strong>" in (rendered.html or "") and not _has_bold_semantics(body):
+        raise PublisherError(
+            "Filling Baijiahao content",
+            "The Baijiahao editor did not preserve the rendered bold semantic.",
+        )
+    if ("<ul>" in (rendered.html or "") or "<ol>" in (rendered.html or "")) and not _has_list_semantics(body):
+        raise PublisherError(
+            "Filling Baijiahao content",
+            "The Baijiahao editor did not preserve the rendered list semantic.",
+        )
 
 
 def _image_file_inputs(page: Page) -> list[Locator]:
-    inputs = page.locator('input[type="file"]')
     result: list[Locator] = []
-    for index in range(inputs.count()):
-        candidate = inputs.nth(index)
-        accept = (candidate.get_attribute("accept") or "").lower()
-        if not accept or "image" in accept or ".png" in accept:
-            result.append(candidate)
+    # The upload control may live in the main document or in an editor iframe.
+    for frame in page.frames:
+        inputs = frame.locator('input[type="file"]')
+        for index in range(inputs.count()):
+            candidate = inputs.nth(index)
+            accept = (candidate.get_attribute("accept") or "").lower()
+            if not accept or "image" in accept or ".png" in accept:
+                result.append(candidate)
     return result
+
+
+def _is_enabled_control(locator: Locator) -> bool:
+    try:
+        return (
+            locator.is_enabled()
+            and locator.get_attribute("disabled") is None
+            and locator.get_attribute("aria-disabled") != "true"
+        )
+    except Exception:
+        return False
 
 
 def _image_trigger(page: Page) -> Locator | None:
@@ -318,7 +433,7 @@ def _image_trigger(page: Page) -> Locator | None:
     ]
     for selector in selectors:
         candidate = _first_interactable(page.locator(selector))
-        if candidate is not None:
+        if candidate is not None and _is_enabled_control(candidate):
             return candidate
     return None
 
@@ -402,12 +517,62 @@ def _wait_for_editor_images(page: Page, editor: Locator, minimum: int) -> None:
 
 
 def _click_local_upload_tab(page: Page) -> None:
-    dialog = page.locator('[role="dialog"], .cheetah-modal, .ant-modal')
-    for text in ("本地上传", "上传图片", "本地图片"):
-        candidate = _first_interactable(dialog.get_by_text(text, exact=True))
-        if candidate is not None:
-            candidate.click()
-            return
+    for frame in page.frames:
+        dialog = frame.locator('[role="dialog"], .cheetah-modal, .ant-modal')
+        for text in ("本地上传", "上传图片", "本地图片"):
+            candidate = _first_interactable(dialog.get_by_text(text, exact=True))
+            if candidate is not None:
+                candidate.click()
+                return
+
+
+def _wait_for_image_file_input(page: Page, timeout: int = 15_000) -> Locator:
+    elapsed = 0
+    while elapsed < timeout:
+        inputs = _image_file_inputs(page)
+        if inputs:
+            return inputs[-1]
+        page.wait_for_timeout(250)
+        elapsed += 250
+    raise TimeoutError("No image file input appeared.")
+
+
+def _set_image_files(file_input: Locator, paths: list[str]) -> None:
+    if file_input.get_attribute("multiple") is not None:
+        file_input.set_input_files(paths, timeout=30_000)
+        return
+    if len(paths) != 1:
+        raise PublisherError(
+            "Uploading Baijiahao images",
+            "The Baijiahao image input accepts only one file at a time.",
+        )
+    file_input.set_input_files(paths[0], timeout=30_000)
+
+
+def _set_native_file_chooser_images(
+    page: Page,
+    trigger: Locator,
+    paths: list[str],
+) -> bool:
+    """Handle editors whose image button opens the browser file chooser."""
+
+    try:
+        with page.expect_file_chooser(timeout=3_000) as chooser_info:
+            trigger.click()
+        chooser = chooser_info.value
+    except TimeoutError:
+        return False
+
+    if chooser.is_multiple:
+        chooser.set_files(paths, timeout=30_000)
+        return True
+
+    chooser.set_files(paths[0], timeout=30_000)
+    for path in paths[1:]:
+        with page.expect_file_chooser(timeout=15_000) as next_chooser_info:
+            trigger.click()
+        next_chooser_info.value.set_files(path, timeout=30_000)
+    return True
 
 
 def _confirm_image_dialog(page: Page) -> None:
@@ -482,35 +647,24 @@ def _insert_images(page: Page, editor: Locator, images: tuple[Path, ...]) -> Non
             "Could not find the editor's image insertion control.",
         )
 
-    trigger.click()
+    paths = [str(image.resolve()) for image in images]
+    if _set_native_file_chooser_images(page, trigger, paths):
+        # Direct image controls insert into the editor after the selected files
+        # finish uploading; there is no modal thumbnail/confirm workflow.
+        _wait_for_editor_images(page, editor, before_count + len(images))
+        return
+
     _click_local_upload_tab(page)
     try:
-        page.wait_for_function(
-            """
-            () => Array.from(document.querySelectorAll('input[type="file"]'))
-                .some(input => /image|\\.png/i.test(input.getAttribute('accept') || ''))
-            """,
-            timeout=15_000,
-        )
+        file_input = _wait_for_image_file_input(page)
     except TimeoutError as exc:
         raise PublisherError(
             "Uploading Baijiahao images",
-            "The image dialog opened but no file upload input appeared.",
+            "No Baijiahao image file input appeared after opening the image controls. "
+            "The editor may have changed its upload control.",
         ) from exc
 
-    inputs = _image_file_inputs(page)
-    if not inputs:
-        raise PublisherError(
-            "Uploading Baijiahao images",
-            "Could not find a usable image file input in the Baijiahao editor.",
-        )
-    file_input = inputs[-1]
-    paths = [str(image.resolve()) for image in images]
-    if file_input.get_attribute("multiple") is not None:
-        file_input.set_input_files(paths, timeout=30_000)
-    else:
-        for path in paths:
-            file_input.set_input_files(path, timeout=30_000)
+    _set_image_files(file_input, paths)
     _wait_for_upload_finish(page, len(images))
     _select_uploaded_thumbnails(page, len(images))
     _confirm_image_dialog(page)

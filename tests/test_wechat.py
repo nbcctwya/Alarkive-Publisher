@@ -40,3 +40,19 @@ class WeChatNavigationTests(unittest.TestCase):
 
         with self.assertRaises(PlaywrightError):
             wechat._navigate_home(FailedPage())  # type: ignore[arg-type]
+
+
+class WeChatTextFormattingTests(unittest.TestCase):
+    def test_plain_text_editor_html_preserves_paragraphs_and_line_breaks(self) -> None:
+        value = "第一段。\n\n第二段。\n第三行。\n\n重点 🚀"
+
+        self.assertEqual(
+            wechat._plain_text_editor_html(value),
+            "<p>第一段。</p><p>第二段。<br>第三行。</p><p>重点 🚀</p>",
+        )
+
+    def test_plain_text_editor_html_escapes_markup(self) -> None:
+        self.assertEqual(
+            wechat._plain_text_editor_html("<script>alert(1)</script>"),
+            "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>",
+        )

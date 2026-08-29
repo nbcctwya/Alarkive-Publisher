@@ -15,6 +15,7 @@ from playwright.sync_api import (
 )
 
 from .content import PlatformContent, PostContent
+from .renderer import render_for_platform
 
 
 LOGIN_URL = "https://creator.xiaohongshu.com/"
@@ -359,6 +360,7 @@ def _compact_text(value: str) -> str:
 
 
 def _fill_text(page: Page, content: PlatformContent) -> None:
+    rendered = render_for_platform("xiaohongshu", content.body)
     title = _title_locator(page)
     title.fill(content.title, timeout=15_000)
     if _read_locator_value(title) != content.title:
@@ -369,15 +371,15 @@ def _fill_text(page: Page, content: PlatformContent) -> None:
 
     body = _body_locator(page)
     try:
-        body.fill(content.body, timeout=15_000)
+        body.fill(rendered.text, timeout=15_000)
     except Exception:
         # A few rich-text implementations accept keyboard insertion more
         # reliably than fill(), while still preserving newlines and emoji.
         body.click()
-        page.keyboard.insert_text(content.body)
+        page.keyboard.insert_text(rendered.text)
 
     actual_body = _read_locator_value(body)
-    if content.body and _compact_text(content.body) not in _compact_text(actual_body):
+    if rendered.text and _compact_text(rendered.text) not in _compact_text(actual_body):
         raise PublisherError(
             "Filling title and content",
             "The body editor did not contain the provided content after filling.",

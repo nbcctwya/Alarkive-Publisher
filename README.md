@@ -1,4 +1,4 @@
-# Alarkive Publisher v0.1.1
+# Alarkive Publisher v0.1.2
 
 当前完整工作流为：
 
@@ -6,6 +6,8 @@
 Web Content Manager
         ↓
 生成 Alarkive Package v0.1
+        ↓
+Markdown Renderer
         ↓
 CLI Publisher
         ↓
@@ -79,7 +81,7 @@ posts/
 
 `manifest.json` 是 Package v0.1 的唯一元数据来源，包含任务 ID、名称、带时区的 `created_at`，以及每个平台自己的 `title`、`content_file` 和有序 `images` 列表。
 
-正文使用 UTF-8 Markdown 原文保存。Package Loader 不会删除 `**`、转换 HTML、解析富文本或修改换行、空行、中文和 Emoji。
+正文使用 UTF-8 Markdown 原文保存。Package Loader 不会删除 `**`、转换 HTML、解析富文本或修改换行、空行、中文和 Emoji。Publisher 运行时才根据平台渲染 Markdown，Package 文件本身不会被改写。
 
 ## 使用 CLI Publisher
 
@@ -102,6 +104,24 @@ Publisher 会在启动浏览器前完整读取并验证：
 - 三个平台的标题和 Markdown 正文
 - manifest 指定的每个平台图片列表及顺序
 - 所有正文和图片文件是否存在、是否位于 Package 内
+
+验证通过后，Publisher 会在运行时使用 Markdown Renderer：小红书和微信公众号贴图使用可读的纯文本，百家号使用受控 HTML 富文本。三个标题仍然直接使用 manifest 中的普通字符串。
+
+## Markdown Renderer
+
+Package 始终保存 Markdown Source，例如：
+
+```markdown
+**64GB：甜点**
+```
+
+Publisher 根据平台处理：
+
+- 小红书：`64GB：甜点`，不带 `**`
+- 百家号：使用真正的 `<strong>` 粗体语义
+- 微信公众号贴图：`64GB：甜点`，不带 `**`
+
+当前支持段落、标题、粗体、斜体、无序/有序列表、引用、行内代码和链接。复杂 Markdown 会安全降级为可读文本，不保证完整视觉样式。原始 Markdown、manifest 和图片不会被 Renderer 修改。
 
 验证通过后才会启动 persistent Chrome profile，并按以下顺序运行：
 
@@ -130,7 +150,7 @@ Error: manifest.json not found.
 This folder is not a valid Alarkive Package v0.1.
 ```
 
-Package Loader 是只读的，不会修改 `manifest.json`、Markdown 或图片文件。旧版 `xiaohongshu/*.txt`、`baijiahao/*.txt`、`wechat/*.txt` 目录格式不再是主流程，也不由 v0.1.1 的 `main.py` 读取。
+Package Loader 是只读的，不会修改 `manifest.json`、Markdown 或图片文件。旧版 `xiaohongshu/*.txt`、`baijiahao/*.txt`、`wechat/*.txt` 目录格式不再是主流程，也不由 v0.1.2 的 `main.py` 读取。
 
 ## 手工登录
 

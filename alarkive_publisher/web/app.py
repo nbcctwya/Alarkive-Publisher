@@ -25,7 +25,7 @@ WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
 
-app = FastAPI(title="Alarkive Publisher", version="0.1.1")
+app = FastAPI(title="Alarkive Publisher", version="0.1.2")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 

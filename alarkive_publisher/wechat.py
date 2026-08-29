@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import re
+from html import escape
 from pathlib import Path
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page, TimeoutError
 
 from .content import PlatformContent, PostContent
+from .renderer import render_for_platform
 from .xiaohongshu import PublisherError, _run_step
 
 
@@ -275,7 +277,65 @@ def _fill_editable(locator: Locator, value: str, page: Page) -> None:
         page.keyboard.insert_text(value)
 
 
+def _plain_text_editor_html(value: str) -> str:
+    """Represent plain text as safe blocks for the WeChat editor."""
+
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    paragraphs = normalized.split("\n\n")
+    result: list[str] = []
+    for paragraph in paragraphs:
+        lines = paragraph.split("\n")
+        content = "<br>".join(escape(line, quote=False) for line in lines)
+        result.append(f"<p>{content or '<br>'}</p>")
+    return "".join(result)
+
+
+def _fill_plain_contenteditable(locator: Locator, value: str, page: Page) -> None:
+    """Insert plain text with explicit paragraph and line-break structure."""
+
+    editor_html = _plain_text_editor_html(value)
+    try:
+        locator.evaluate(
+            """
+            (element, value) => {
+                element.focus();
+                element.dispatchEvent(new InputEvent('beforeinput', {
+                    bubbles: true,
+                    cancelable: true,
+                    inputType: 'insertFromPaste',
+                    data: null
+                }));
+                element.innerHTML = value;
+                element.dispatchEvent(new InputEvent('input', {
+                    bubbles: true,
+                    inputType: 'insertFromPaste',
+                    data: null
+                }));
+                element.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            """,
+            editor_html,
+        )
+    except Exception:
+        # Keep compatibility with a non-DOM-backed editor implementation.
+        _fill_editable(locator, value, page)
+
+
+def _has_line_break_structure(locator: Locator) -> bool:
+    try:
+        return bool(
+            locator.evaluate(
+                """
+                element => !!element.querySelector('p, div, br')
+                """
+            )
+        )
+    except Exception:
+        return False
+
+
 def _fill_text(page: Page, content: PlatformContent) -> None:
+    rendered = render_for_platform("wechat", content.body)
     title = _title_locator(page)
     _fill_editable(title, content.title, page)
     if _read_value(title).strip() != content.title:
@@ -285,14 +345,23 @@ def _fill_text(page: Page, content: PlatformContent) -> None:
         )
 
     description = _description_locator(page)
-    _fill_editable(description, content.body, page)
-    if content.body and _compact_text(content.body) not in _compact_text(
+    if description.get_attribute("contenteditable") == "true":
+        _fill_plain_contenteditable(description, rendered.text, page)
+    else:
+        _fill_editable(description, rendered.text, page)
+    if rendered.text and _compact_text(rendered.text) not in _compact_text(
         _read_value(description)
     ):
         raise PublisherError(
             "Filling WeChat title and content",
             "The WeChat description editor did not contain the provided content.",
         )
+    if "\n" in rendered.text and description.get_attribute("contenteditable") == "true":
+        if not _has_line_break_structure(description):
+            raise PublisherError(
+                "Filling WeChat title and content",
+                "The WeChat description editor did not preserve line-break structure.",
+            )
 
     validation_text = _visible_text(page)
     if re.search(
