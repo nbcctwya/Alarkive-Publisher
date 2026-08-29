@@ -441,19 +441,19 @@ def start_browser(project_root: Path):
 
 def run_xiaohongshu(page: Page, post: PostContent) -> None:
     """Fill the Xiaohongshu image-post page without publishing."""
-    print("[3/12] Checking Xiaohongshu login...")
+    print("[3/17] Checking Xiaohongshu login...")
     _run_step("Checking Xiaohongshu login", lambda: _check_login(page))
 
-    print("[4/12] Opening Xiaohongshu publisher...")
+    print("[4/17] Opening Xiaohongshu publisher...")
     _run_step("Opening Xiaohongshu publisher", lambda: _open_image_publisher(page))
 
-    print(f"[5/12] Uploading {len(post.images)} Xiaohongshu images...")
+    print(f"[5/17] Uploading {len(post.images)} Xiaohongshu images...")
     _run_step(
         "Uploading Xiaohongshu images",
         lambda: _upload_images(page, post.images),
     )
 
-    print("[6/12] Filling Xiaohongshu title and content...")
+    print("[6/17] Filling Xiaohongshu title and content...")
     _run_step(
         "Filling Xiaohongshu title and content",
         lambda: _fill_text(page, post.xiaohongshu),

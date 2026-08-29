@@ -8,13 +8,13 @@ from pathlib import Path
 from alarkive_publisher.content import ContentError, load_post
 
 
-VERSION = "v0.0.2"
+VERSION = "v0.0.3"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Fill Xiaohongshu and Baijiahao image posts in order, "
+            "Fill Xiaohongshu, Baijiahao, and WeChat image posts in order, "
             "then stop before publishing."
         )
     )
@@ -28,7 +28,7 @@ def main() -> int:
 
     print(f"Alarkive Publisher {VERSION}")
     print()
-    print("[1/12] Loading content...")
+    print("[1/17] Loading content...")
 
     try:
         post = load_post(post_folder)
@@ -54,6 +54,13 @@ def main() -> int:
     print("Content:")
     print(f"{len(post.baijiahao.body)} characters")
     print()
+    print("WeChat")
+    print("Title:")
+    print(post.wechat.title)
+    print()
+    print("Content:")
+    print(f"{len(post.wechat.body)} characters")
+    print()
     print("Images:")
     for image in post.images:
         print(image.name)
@@ -62,6 +69,7 @@ def main() -> int:
     try:
         from alarkive_publisher.xiaohongshu import start_browser, run_xiaohongshu
         from alarkive_publisher.baijiahao import run_baijiahao
+        from alarkive_publisher.wechat import run_wechat
     except ModuleNotFoundError as exc:
         if exc.name != "playwright":
             raise
@@ -83,7 +91,7 @@ def main() -> int:
 
     try:
         current_step = "Starting browser"
-        print("[2/12] Starting browser...")
+        print("[2/17] Starting browser...")
         playwright, context, page = start_browser(project_root)
 
         print()
@@ -91,7 +99,7 @@ def main() -> int:
         print()
         current_step = "Xiaohongshu"
         run_xiaohongshu(page, post)
-        print("[7/12] Xiaohongshu ready.")
+        print("[7/17] Xiaohongshu ready.")
         print()
         print("================================")
         print("Xiaohongshu ready.")
@@ -113,7 +121,7 @@ def main() -> int:
         current_step = "Baijiahao"
         failure_screenshot = "baijiahao-failure.png"
         run_baijiahao(page, post)
-        print("[12/12] Baijiahao ready.")
+        print("[12/17] Baijiahao ready.")
         print()
         print("================================")
         print("Baijiahao ready.")
@@ -122,10 +130,32 @@ def main() -> int:
         print("✓ Title filled")
         print("✓ Content filled")
         print()
+        print("The Publish button was NOT clicked.")
+        print("Please inspect Baijiahao in the browser.")
+        print()
+        print("Press Enter to continue to WeChat...")
+        print("================================")
+        input()
+
+        print()
+        print("--- WeChat ---")
+        print()
+        current_step = "WeChat"
+        failure_screenshot = "wechat-failure.png"
+        page = run_wechat(page, post)
+        print("[17/17] WeChat ready.")
+        print()
+        print("================================")
+        print("WeChat ready.")
+        print()
+        print("✓ Images uploaded")
+        print("✓ Title filled")
+        print("✓ Content filled")
+        print()
         print("DRY RUN COMPLETE")
         print()
         print("The final Publish button was NOT clicked.")
-        print("Please inspect Baijiahao in the browser.")
+        print("Please inspect the WeChat sticker post manually in the browser.")
         print()
         print("Press Enter to close Alarkive Publisher...")
         print("================================")
@@ -136,6 +166,8 @@ def main() -> int:
         print(f"ERROR during {error_step} step:", file=sys.stderr)
         print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
         traceback.print_exception(exc, file=sys.stderr)
+        if current_step == "WeChat" and context is not None and context.pages:
+            page = context.pages[-1]
         if page is not None:
             try:
                 screenshot_path = debug_dir / failure_screenshot

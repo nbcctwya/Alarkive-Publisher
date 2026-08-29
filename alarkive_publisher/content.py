@@ -23,12 +23,18 @@ class PostContent:
     folder: Path
     xiaohongshu: PlatformContent
     baijiahao: PlatformContent
+    wechat: PlatformContent
     images: tuple[Path, ...]
 
 
 def _load_platform_content(post_folder: Path, platform: str) -> PlatformContent:
     platform_dir = post_folder / platform
-    platform_name = "Xiaohongshu" if platform == "xiaohongshu" else "Baijiahao"
+    platform_names = {
+        "xiaohongshu": "Xiaohongshu",
+        "baijiahao": "Baijiahao",
+        "wechat": "WeChat",
+    }
+    platform_name = platform_names.get(platform, platform)
     if not platform_dir.is_dir():
         raise ContentError(f"Error: {platform_name} content directory not found.")
 
@@ -100,9 +106,11 @@ def load_post(post_folder: Path) -> PostContent:
 
     xiaohongshu = _load_platform_content(post_folder, "xiaohongshu")
     baijiahao = _load_platform_content(post_folder, "baijiahao")
+    wechat = _load_platform_content(post_folder, "wechat")
     return PostContent(
         folder=post_folder,
         xiaohongshu=xiaohongshu,
         baijiahao=baijiahao,
+        wechat=wechat,
         images=_load_images(post_folder),
     )

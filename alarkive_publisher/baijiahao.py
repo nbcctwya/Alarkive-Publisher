@@ -467,6 +467,14 @@ def _confirm_image_dialog(page: Page) -> None:
 
 def _insert_images(page: Page, editor: Locator, images: tuple[Path, ...]) -> None:
     before_count = _editor_image_count(editor)
+    try:
+        page.locator(".edui-for-insertimage").first.wait_for(
+            state="visible", timeout=60_000
+        )
+    except TimeoutError:
+        # Fall through to the semantic/CSS selector list below so that a
+        # different editor version can still provide its own image control.
+        pass
     trigger = _image_trigger(page)
     if trigger is None:
         raise PublisherError(
@@ -511,13 +519,13 @@ def _insert_images(page: Page, editor: Locator, images: tuple[Path, ...]) -> Non
 
 def run_baijiahao(page: Page, post: PostContent) -> None:
     """Fill a Baijiahao article and insert shared images without publishing."""
-    print("[8/12] Checking Baijiahao login...")
+    print("[8/17] Checking Baijiahao login...")
     _run_step("Checking Baijiahao login", lambda: _check_login(page))
 
-    print("[9/12] Opening Baijiahao editor...")
+    print("[9/17] Opening Baijiahao editor...")
     _run_step("Opening Baijiahao editor", lambda: _open_editor(page))
 
-    print("[10/12] Filling Baijiahao title and content...")
+    print("[10/17] Filling Baijiahao title and content...")
     body: Locator | None = None
 
     def fill_content() -> None:
@@ -530,7 +538,7 @@ def run_baijiahao(page: Page, post: PostContent) -> None:
     if body is None:
         raise PublisherError("Filling Baijiahao content", "Body editor was not retained.")
 
-    print(f"[11/12] Uploading {len(post.images)} Baijiahao images into content...")
+    print(f"[11/17] Uploading {len(post.images)} Baijiahao images into content...")
     _run_step(
         "Uploading Baijiahao images",
         lambda: _insert_images(page, body, post.images),
