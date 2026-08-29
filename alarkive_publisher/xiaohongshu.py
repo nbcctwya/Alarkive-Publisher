@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import os
 import re
-import sys
-import traceback
 from pathlib import Path
 from typing import Callable, Iterable, TypeVar
 
@@ -16,7 +14,7 @@ from playwright.sync_api import (
     sync_playwright,
 )
 
-from .content import PostContent
+from .content import PlatformContent, PostContent
 
 
 LOGIN_URL = "https://creator.xiaohongshu.com/"
@@ -360,10 +358,10 @@ def _compact_text(value: str) -> str:
     return re.sub(r"\s+", "", value.replace("\u00a0", " "))
 
 
-def _fill_text(page: Page, post: PostContent) -> None:
+def _fill_text(page: Page, content: PlatformContent) -> None:
     title = _title_locator(page)
-    title.fill(post.title, timeout=15_000)
-    if _read_locator_value(title) != post.title:
+    title.fill(content.title, timeout=15_000)
+    if _read_locator_value(title) != content.title:
         raise PublisherError(
             "Filling title and content",
             "The title was not accepted exactly as provided; it was not modified.",
@@ -371,15 +369,15 @@ def _fill_text(page: Page, post: PostContent) -> None:
 
     body = _body_locator(page)
     try:
-        body.fill(post.body, timeout=15_000)
+        body.fill(content.body, timeout=15_000)
     except Exception:
         # A few rich-text implementations accept keyboard insertion more
         # reliably than fill(), while still preserving newlines and emoji.
         body.click()
-        page.keyboard.insert_text(post.body)
+        page.keyboard.insert_text(content.body)
 
     actual_body = _read_locator_value(body)
-    if post.body and _compact_text(post.body) not in _compact_text(actual_body):
+    if content.body and _compact_text(content.body) not in _compact_text(actual_body):
         raise PublisherError(
             "Filling title and content",
             "The body editor did not contain the provided content after filling.",
@@ -427,99 +425,36 @@ def _launch_context(playwright, user_data_dir: Path) -> BrowserContext:
         raise
 
 
-def _pause_and_close(context: BrowserContext, message: str) -> None:
-    print(message)
-    try:
-        input()
-    finally:
-        context.close()
-
-
-def run_dry_run(post: PostContent, project_root: Path) -> None:
+def start_browser(project_root: Path):
+    """Start the shared visible, persistent browser context."""
     browser_data_dir = _automation_user_data_dir(project_root)
-    debug_dir = project_root / "debug"
-    debug_dir.mkdir(parents=True, exist_ok=True)
-
-    context: BrowserContext | None = None
-    page: Page | None = None
-    playwright = None
-    current_step = "Starting browser"
-
+    playwright = sync_playwright().start()
     try:
-        playwright = sync_playwright().start()
-        current_step = "Starting browser"
-        print("[2/7] Starting browser...")
         context = _launch_context(playwright, browser_data_dir)
-        page = context.pages[0] if context.pages else context.new_page()
-        page.set_default_timeout(15_000)
-
-        current_step = "Checking login"
-        print("[3/7] Checking login...")
-        _run_step(current_step, lambda: _check_login(page))
-
-        current_step = "Opening Xiaohongshu publisher"
-        print("[4/7] Opening Xiaohongshu publisher...")
-        _run_step(current_step, lambda: _open_image_publisher(page))
-
-        current_step = "Uploading images"
-        print(f"[5/7] Uploading {len(post.images)} images...")
-        _run_step(current_step, lambda: _upload_images(page, post.images))
-
-        current_step = "Filling title and content"
-        print("[6/7] Filling title and content...")
-        _run_step(current_step, lambda: _fill_text(page, post))
-
-        current_step = "Done"
-        print("[7/7] Done.")
-        print()
-        print("================================")
-        print("Alarkive Publisher v0.0.1")
-        print()
-        print("✓ Images uploaded")
-        print("✓ Title filled")
-        print("✓ Content filled")
-        print()
-        print("DRY RUN COMPLETE")
-        print()
-        print("The final Publish button was NOT clicked.")
-        print("Please inspect the post manually in the browser.")
-        print()
-        print("Press Enter to close the browser...")
-        print("================================")
-        input()
-    except Exception as exc:
-        print()
-        print(f"ERROR during step: {current_step}", file=sys.stderr)
-        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
-        traceback.print_exc()
-        if page is not None:
-            try:
-                screenshot_path = debug_dir / "failure.png"
-                page.screenshot(path=str(screenshot_path), full_page=True)
-                print(f"Debug screenshot saved to: {screenshot_path}", file=sys.stderr)
-            except Exception as screenshot_error:
-                print(
-                    f"Could not save debug screenshot: {type(screenshot_error).__name__}: "
-                    f"{screenshot_error}",
-                    file=sys.stderr,
-                )
-        if context is not None:
-            try:
-                _pause_and_close(
-                    context,
-                    "The browser was left open for inspection. Press Enter to close it...",
-                )
-            except Exception:
-                try:
-                    context.close()
-                except Exception:
-                    pass
+    except Exception:
+        playwright.stop()
         raise
-    finally:
-        if context is not None:
-            try:
-                context.close()
-            except Exception:
-                pass
-        if playwright is not None:
-            playwright.stop()
+    page = context.pages[0] if context.pages else context.new_page()
+    page.set_default_timeout(15_000)
+    return playwright, context, page
+
+
+def run_xiaohongshu(page: Page, post: PostContent) -> None:
+    """Fill the Xiaohongshu image-post page without publishing."""
+    print("[3/12] Checking Xiaohongshu login...")
+    _run_step("Checking Xiaohongshu login", lambda: _check_login(page))
+
+    print("[4/12] Opening Xiaohongshu publisher...")
+    _run_step("Opening Xiaohongshu publisher", lambda: _open_image_publisher(page))
+
+    print(f"[5/12] Uploading {len(post.images)} Xiaohongshu images...")
+    _run_step(
+        "Uploading Xiaohongshu images",
+        lambda: _upload_images(page, post.images),
+    )
+
+    print("[6/12] Filling Xiaohongshu title and content...")
+    _run_step(
+        "Filling Xiaohongshu title and content",
+        lambda: _fill_text(page, post.xiaohongshu),
+    )

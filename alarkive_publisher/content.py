@@ -13,40 +13,56 @@ class ContentError(Exception):
 
 
 @dataclass(frozen=True)
-class PostContent:
-    folder: Path
+class PlatformContent:
     title: str
     body: str
+
+
+@dataclass(frozen=True)
+class PostContent:
+    folder: Path
+    xiaohongshu: PlatformContent
+    baijiahao: PlatformContent
     images: tuple[Path, ...]
 
 
-def load_post(post_folder: Path) -> PostContent:
-    if not post_folder.exists():
-        raise ContentError(f"Error: Post folder not found: {post_folder}")
-    if not post_folder.is_dir():
-        raise ContentError(f"Error: Post folder is not a directory: {post_folder}")
+def _load_platform_content(post_folder: Path, platform: str) -> PlatformContent:
+    platform_dir = post_folder / platform
+    platform_name = "Xiaohongshu" if platform == "xiaohongshu" else "Baijiahao"
+    if not platform_dir.is_dir():
+        raise ContentError(f"Error: {platform_name} content directory not found.")
 
     txt_files = sorted(
         path
-        for path in post_folder.iterdir()
+        for path in platform_dir.iterdir()
         if path.is_file() and path.suffix.lower() == ".txt"
     )
     if not txt_files:
-        raise ContentError("Error: No content .txt file found.")
+        raise ContentError(f"Error: No {platform_name} .txt file found.")
     if len(txt_files) > 1:
         names = "\n".join(f"- {path.name}" for path in txt_files)
-        raise ContentError(f"Error: Multiple .txt files found:\n{names}")
+        raise ContentError(
+            f"Error: Multiple {platform_name} .txt files found:\n{names}"
+        )
 
     content_file = txt_files[0]
     try:
         body = content_file.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
         raise ContentError(
-            f"Error: Could not read '{content_file.name}' as UTF-8: {exc}"
+            f"Error: Could not read {platform_name} file "
+            f"'{content_file.name}' as UTF-8: {exc}"
         ) from exc
     except OSError as exc:
-        raise ContentError(f"Error: Could not read '{content_file.name}': {exc}") from exc
+        raise ContentError(
+            f"Error: Could not read {platform_name} file "
+            f"'{content_file.name}': {exc}"
+        ) from exc
 
+    return PlatformContent(title=content_file.stem, body=body)
+
+
+def _load_images(post_folder: Path) -> tuple[Path, ...]:
     images_dir = post_folder / "images"
     if not images_dir.is_dir():
         raise ContentError("Error: Images directory not found.")
@@ -73,9 +89,20 @@ def load_post(post_folder: Path) -> PostContent:
             f"Error: Duplicate numeric image order found:\n{details}"
         )
 
+    return tuple(path for _, path in numbered_images)
+
+
+def load_post(post_folder: Path) -> PostContent:
+    if not post_folder.exists():
+        raise ContentError(f"Error: Post folder not found: {post_folder}")
+    if not post_folder.is_dir():
+        raise ContentError(f"Error: Post folder is not a directory: {post_folder}")
+
+    xiaohongshu = _load_platform_content(post_folder, "xiaohongshu")
+    baijiahao = _load_platform_content(post_folder, "baijiahao")
     return PostContent(
         folder=post_folder,
-        title=content_file.stem,
-        body=body,
-        images=tuple(path for _, path in numbered_images),
+        xiaohongshu=xiaohongshu,
+        baijiahao=baijiahao,
+        images=_load_images(post_folder),
     )
