@@ -187,18 +187,17 @@ class PublishManager:
             except Exception:
                 LOGGER.exception("Could not save publisher failure state")
             LOGGER.exception("Web Publisher workflow failed for %s", job.post_id)
-            if job.context is not None and not self._context_is_open(job.context):
-                job.browser_open = False
-            if job.context is not None and job.browser_open:
+            if job.context is not None and self._job_browser_is_open(job):
                 # Keep the browser open for inspection, but let the user close
                 # it through the Web UI on this same worker thread. Playwright
                 # sync objects are intentionally not touched by request threads.
-                job.close_requested.wait()
+                self._wait_for_failed_browser_close(job)
             if job.context is not None:
                 self._close_browser(job)
         finally:
             with self._lock:
                 if self._active_job is job:
+                    job.browser_open = False
                     self._active_job = None
 
     @staticmethod
@@ -211,6 +210,29 @@ class PublishManager:
         except Exception:
             return False
 
+    def _job_browser_is_open(self, job: _ActiveJob) -> bool:
+        with self._lock:
+            browser_open = job.browser_open
+        if not browser_open or job.context is None:
+            return False
+        if self._context_is_open(job.context):
+            return True
+        self._mark_browser_closed(job)
+        return False
+
+    def _wait_for_failed_browser_close(self, job: _ActiveJob) -> None:
+        """Wait for Web close or an external browser shutdown.
+
+        Playwright objects belong to the worker thread. Polling here lets the
+        same thread observe a manually closed or crashed browser without
+        blocking the active-job slot forever.
+        """
+
+        while not job.close_requested.wait(timeout=0.5):
+            if job.context is None or not self._context_is_open(job.context):
+                self._mark_browser_closed(job)
+                return
+
     def _mark_browser_closed(self, job: _ActiveJob) -> None:
         with self._lock:
             job.browser_open = False
@@ -219,7 +241,10 @@ class PublishManager:
     def _close_browser(job: _ActiveJob) -> None:
         if job.context is not None:
             try:
-                job.context.close()  # type: ignore[attr-defined]
+                # A manual Chrome close already disconnected the context. Do
+                # not call close() again in that case.
+                if PublishManager._context_is_open(job.context):
+                    job.context.close()  # type: ignore[attr-defined]
             except Exception:
                 LOGGER.warning("Could not close failed workflow browser context", exc_info=True)
         if job.playwright is not None:
@@ -227,6 +252,7 @@ class PublishManager:
                 job.playwright.stop()  # type: ignore[attr-defined]
             except Exception:
                 LOGGER.warning("Could not stop failed workflow Playwright", exc_info=True)
+        job.browser_open = False
 
     def close_browser(self, post_id: str) -> dict:
         with self._lock:

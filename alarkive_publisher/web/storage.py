@@ -26,6 +26,10 @@ PLATFORM_LABELS = {
     "wechat": "微信公众号",
 }
 TASK_ID_RE = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{4}$")
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+MAX_IMAGE_SIZE_BYTES = 20 * 1024 * 1024
+MAX_TOTAL_IMAGE_SIZE_BYTES = 100 * 1024 * 1024
+MAX_IMAGE_COUNT = 20
 
 
 class StorageError(ValueError):
@@ -85,11 +89,12 @@ def _validate_required_fields(
     name: str,
     titles: Mapping[str, str],
     bodies: Mapping[str, str],
-) -> str:
+) -> tuple[str, dict[str, str]]:
     clean_name = name.strip()
     if not clean_name:
         raise StorageError("任务名称不能为空。")
 
+    clean_titles: dict[str, str] = {}
     for platform in PLATFORMS:
         title = titles.get(platform)
         body = bodies.get(platform)
@@ -97,18 +102,36 @@ def _validate_required_fields(
             raise StorageError(f"{PLATFORM_LABELS[platform]}标题不能为空。")
         if not isinstance(body, str) or not body.strip():
             raise StorageError(f"{PLATFORM_LABELS[platform]}正文不能为空。")
-    return clean_name
+        clean_titles[platform] = title.strip()
+    return clean_name, clean_titles
 
 
 def _validate_images(images: Sequence[ImageData]) -> None:
     if not images:
         raise StorageError("至少需要上传 1 张 PNG 图片。")
+    if len(images) > MAX_IMAGE_COUNT:
+        raise StorageError(f"图片数量超过限制，单个任务最多上传 {MAX_IMAGE_COUNT} 张图片。")
+
+    total_size = 0
     for image in images:
         filename = Path(image.filename).name
         if not filename or Path(filename).suffix.lower() != ".png":
             raise StorageError("当前版本仅支持 PNG 图片。")
         if not image.data:
             raise StorageError(f"图片为空：{filename}")
+        if not image.data.startswith(PNG_SIGNATURE):
+            raise StorageError(f"图片不是有效的 PNG 文件：{filename}")
+        if len(image.data) > MAX_IMAGE_SIZE_BYTES:
+            raise StorageError(
+                f"图片过大：{filename}。单张图片不能超过 {MAX_IMAGE_SIZE_BYTES // (1024 * 1024)} MB。"
+            )
+        total_size += len(image.data)
+
+    if total_size > MAX_TOTAL_IMAGE_SIZE_BYTES:
+        raise StorageError(
+            "图片总大小超过限制：单个任务的图片总大小不能超过 "
+            f"{MAX_TOTAL_IMAGE_SIZE_BYTES // (1024 * 1024)} MB。"
+        )
 
 
 def _safe_manifest_path(relative_path: str) -> Path:
@@ -149,8 +172,15 @@ def _validate_manifest(manifest: Any, expected_id: str | None = None) -> None:
         raise StorageError("manifest platforms 不完整。")
     for platform in PLATFORMS:
         value = platforms[platform]
-        if not isinstance(value, dict) or not isinstance(value.get("title"), str):
+        if (
+            not isinstance(value, dict)
+            or not isinstance(value.get("title"), str)
+            or not value["title"].strip()
+        ):
             raise StorageError(f"manifest 的 {platform} 平台数据无效。")
+        # Keep consumers consistent even when reading a hand-edited package;
+        # this only normalises the in-memory manifest and never rewrites it.
+        value["title"] = value["title"].strip()
         content_file = value.get("content_file")
         images = value.get("images")
         if not isinstance(content_file, str) or not content_file.startswith("content/"):
@@ -179,7 +209,7 @@ def save_post(
     package format independently testable.
     """
 
-    clean_name = _validate_required_fields(name, titles, bodies)
+    clean_name, clean_titles = _validate_required_fields(name, titles, bodies)
     normalised_images = [_normalise_image(image) for image in images]
     _validate_images(normalised_images)
 
@@ -215,7 +245,7 @@ def save_post(
                 "created_at": created_at,
                 "platforms": {
                     platform: {
-                        "title": titles[platform],
+                        "title": clean_titles[platform],
                         "content_file": content_files[platform],
                         "images": image_references,
                     }
@@ -345,7 +375,9 @@ def get_post_detail(post_id: str, posts_root: Path | str | None = None) -> dict[
         platform_data = manifest["platforms"][platform]
         content_path = directory / _safe_manifest_path(platform_data["content_file"])
         try:
-            body = content_path.read_text(encoding="utf-8")
+            # newline="" preserves the Markdown's original CRLF/LF layout.
+            with content_path.open("r", encoding="utf-8", newline="") as file:
+                body = file.read()
         except (OSError, UnicodeDecodeError) as exc:
             raise StorageError(f"无法读取 {platform} Markdown 正文：{exc}") from exc
         platform_contents.append(

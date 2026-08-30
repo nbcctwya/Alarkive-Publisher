@@ -5,10 +5,11 @@ import sys
 import traceback
 from pathlib import Path
 
+from alarkive_publisher import __version__
 from alarkive_publisher.content import ContentError, load_post
 
 
-VERSION = "v0.1.3"
+VERSION = f"v{__version__}"
 
 
 def _configure_output_encoding() -> None:

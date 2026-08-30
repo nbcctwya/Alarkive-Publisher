@@ -10,6 +10,7 @@ from alarkive_publisher.web.storage import ImageData, save_post
 
 
 PLATFORMS = ("xiaohongshu", "baijiahao", "wechat")
+PNG = b"\x89PNG\r\n\x1a\nminimal test data"
 
 
 class PackageLoaderTests(unittest.TestCase):
@@ -21,7 +22,7 @@ class PackageLoaderTests(unittest.TestCase):
             "Bridge 测试",
             titles,
             bodies,
-            [ImageData("first.png", b"first"), ImageData("second.png", b"second")],
+            [ImageData("first.png", PNG), ImageData("second.png", PNG)],
             posts_root=root,
         ).directory
 
@@ -96,3 +97,13 @@ class PackageLoaderTests(unittest.TestCase):
             self._write_manifest(traversal, manifest)
             with self.assertRaisesRegex(ContentError, "outside the package"):
                 load_post(traversal)
+
+    def test_timezone_naive_created_at_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            package = self._make_package(Path(temp))
+            manifest = self._read_manifest(package)
+            manifest["created_at"] = "2026-08-29T20:10:00"
+            self._write_manifest(package, manifest)
+
+            with self.assertRaisesRegex(ContentError, "must include timezone"):
+                load_post(package)

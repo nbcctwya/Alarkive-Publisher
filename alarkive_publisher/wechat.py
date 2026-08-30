@@ -295,24 +295,39 @@ def _plain_text_editor_html(value: str) -> str:
 
 
 def _fill_plain_contenteditable(locator: Locator, value: str, page: Page) -> None:
-    """Insert plain text with explicit paragraph and line-break structure."""
+    """Insert plain text through editor key events so breaks enter its model."""
 
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    try:
+        locator.click()
+        locator.press("ControlOrMeta+A")
+        locator.press("Backspace")
+        lines = normalized.split("\n")
+        for index, line in enumerate(lines):
+            if line:
+                page.keyboard.insert_text(line)
+            if index < len(lines) - 1:
+                # ProseMirror/WeChat consumes Enter as a block split. Sending
+                # the key for each source newline preserves both single line
+                # breaks and blank lines in the editor's own document model.
+                page.keyboard.press("Enter")
+        return
+    except Exception:
+        pass
+
+    # Keep a DOM-backed fallback for editor versions that do not accept key
+    # events. It is intentionally after the keyboard path because assigning
+    # innerHTML alone can be normalized back to one paragraph by ProseMirror.
     editor_html = _plain_text_editor_html(value)
     try:
         locator.evaluate(
             """
             (element, value) => {
                 element.focus();
-                element.dispatchEvent(new InputEvent('beforeinput', {
-                    bubbles: true,
-                    cancelable: true,
-                    inputType: 'insertFromPaste',
-                    data: null
-                }));
                 element.innerHTML = value;
                 element.dispatchEvent(new InputEvent('input', {
                     bubbles: true,
-                    inputType: 'insertFromPaste',
+                    inputType: 'insertText',
                     data: null
                 }));
                 element.dispatchEvent(new Event('change', { bubbles: true }));
@@ -327,12 +342,29 @@ def _fill_plain_contenteditable(locator: Locator, value: str, page: Page) -> Non
 
 def _has_line_break_structure(locator: Locator) -> bool:
     try:
+        result = locator.evaluate(
+            """
+            element => ({
+                hasBlockOrBreak: !!element.querySelector('p, div, br, li'),
+                innerText: element.innerText || '',
+                textContent: element.textContent || '',
+                whiteSpace: getComputedStyle(element).whiteSpace || ''
+            })
+            """
+        )
+        if result["hasBlockOrBreak"]:
+            return True
+
+        # A few WeChat editor builds keep the content as a text node and use
+        # CSS white-space handling instead of emitting p/div/br elements. In
+        # that case innerText is the rendered representation and is the
+        # correct thing to validate; requiring a particular tag caused false
+        # failures even though the user-visible line breaks were preserved.
+        if re.search(r"\r|\n", result["innerText"]):
+            return True
         return bool(
-            locator.evaluate(
-                """
-                element => !!element.querySelector('p, div, br')
-                """
-            )
+            re.search(r"pre|break-spaces", result["whiteSpace"])
+            and re.search(r"\r|\n", result["textContent"])
         )
     except Exception:
         return False

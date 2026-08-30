@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 
 from playwright.sync_api import Locator, Page, TimeoutError
@@ -407,13 +408,39 @@ def _image_file_inputs(page: Page) -> list[Locator]:
         for index in range(inputs.count()):
             candidate = inputs.nth(index)
             accept = (candidate.get_attribute("accept") or "").lower()
-            if not accept or "image" in accept or ".png" in accept:
+            if (
+                not accept
+                or "image" in accept
+                or ".png" in accept
+                or "*/*" in accept
+            ):
                 result.append(candidate)
     return result
 
 
 def _is_enabled_control(locator: Locator) -> bool:
     try:
+        enabled = locator.evaluate(
+            """
+            element => {
+                let current = element;
+                while (current && current.nodeType === Node.ELEMENT_NODE) {
+                    const classes = String(current.className || '').toLowerCase();
+                    if (/(^|[\\s_-])(disabled|is-disabled|forbidden)([\\s_-]|$)/.test(classes)) {
+                        return false;
+                    }
+                    if (current.getAttribute('aria-disabled') === 'true' ||
+                        current.hasAttribute('disabled')) {
+                        return false;
+                    }
+                    current = current.parentElement;
+                }
+                return true;
+            }
+            """
+        )
+        if not enabled:
+            return False
         return (
             locator.is_enabled()
             and locator.get_attribute("disabled") is None
@@ -441,6 +468,157 @@ def _image_trigger(page: Page) -> Locator | None:
         if candidate is not None and _is_enabled_control(candidate):
             return candidate
     return None
+
+
+def _insert_menu_trigger(page: Page) -> Locator | None:
+    """Find the newer editor's active ``+ 插入`` menu trigger."""
+
+    insert_name = re.compile(r"^\+?\s*插入(?:\s*[▼▾⌄])?$")
+    candidates: list[Locator] = []
+    for frame in page.frames:
+        candidates.extend(
+            [
+                frame.get_by_role("button", name=insert_name),
+                frame.locator('[aria-label="插入"], [title="插入"]'),
+                frame.locator('button, [role="button"]').filter(
+                    has_text=insert_name
+                ),
+                frame.get_by_text("插入", exact=True),
+            ]
+        )
+    for candidate_locator in candidates:
+        candidate = _first_interactable(candidate_locator)
+        if candidate is not None and _is_enabled_control(candidate):
+            return candidate
+    return None
+
+
+def _insert_menu_image_item(page: Page) -> Locator | None:
+    """Find an image item after the editor's insert menu has been opened."""
+
+    exact_labels = ("图片", "插入图片", "本地图片", "图片上传")
+    pattern = re.compile(r"^(?:插入)?(?:本地)?图片(?:上传)?$")
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        candidates: list[Locator] = []
+        for frame in page.frames:
+            menu = frame.locator(
+                '[role="menu"], [role="listbox"], .dropdown-menu, '
+                '.ant-dropdown, .el-dropdown-menu'
+            )
+            candidates.extend(
+                [menu.get_by_text(label, exact=True) for label in exact_labels]
+            )
+            candidates.extend(
+                [
+                    menu.get_by_role("menuitem", name=pattern),
+                    menu.get_by_text(pattern),
+                    menu.locator('[aria-label*="图片"], [title*="图片"]'),
+                ]
+            )
+            # Some versions render the dropdown as a plain div without a
+            # role or stable class. Restrict the fallback to likely popover
+            # containers so the grey toolbar icon is not selected by mistake.
+            popover = frame.locator(
+                '[class*="dropdown"], [class*="popover"], [class*="menu"], '
+                '[data-popper-placement]'
+            )
+            candidates.extend(
+                [popover.get_by_text(label, exact=True) for label in exact_labels]
+            )
+        for candidate_locator in candidates:
+            candidate = _first_interactable(candidate_locator)
+            if candidate is not None:
+                return candidate
+        page.wait_for_timeout(100)
+    return None
+
+
+def _upload_from_insert_menu(
+    page: Page,
+    paths: list[str],
+) -> str | None:
+    """Use the active ``插入`` menu when the standalone image icon is grey."""
+
+    trigger = _insert_menu_trigger(page)
+    if trigger is None:
+        return None
+
+    try:
+        trigger.click()
+    except Exception:
+        return None
+
+    image_item = _insert_menu_image_item(page)
+    if image_item is None:
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        return None
+
+    if not _is_enabled_control(image_item):
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        return None
+
+    try:
+        if _set_native_file_chooser_images(page, image_item, paths):
+            return "native"
+    except Exception:
+        # A stale menu item can disappear between discovery and click. Let
+        # the legacy control path make one more compatibility attempt.
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+
+    try:
+        if not _image_file_inputs(page):
+            _click_local_upload_tab(page)
+        file_input = _wait_for_image_file_input(page)
+        _set_image_files(file_input, paths)
+    except (TimeoutError, PublisherError):
+        # The menu may have been a stale/hidden control. Close it before the
+        # legacy image button is tried as a fallback, without hiding the
+        # eventual error from that fallback path.
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        return None
+    return "dialog"
+
+
+def _focus_editor_for_image_insertion(editor: Locator) -> None:
+    """Put the caret in the editor so Baijiahao enables its insert controls."""
+
+    try:
+        editor.click()
+    except Exception:
+        pass
+    try:
+        editor.evaluate(
+            """
+            element => {
+                element.focus();
+                const selection = element.ownerDocument.getSelection();
+                if (!selection) return;
+                const range = element.ownerDocument.createRange();
+                range.selectNodeContents(element);
+                range.collapse(false);
+                selection.removeAllRanges();
+                selection.addRange(range);
+                element.ownerDocument.dispatchEvent(new Event('selectionchange'));
+            }
+            """
+        )
+    except Exception:
+        # The actual insertion code will report a useful error if no control
+        # becomes available; focus is only a compatibility aid.
+        pass
 
 
 def _wait_for_upload_finish(page: Page, expected_count: int) -> None:
@@ -522,13 +700,46 @@ def _wait_for_editor_images(page: Page, editor: Locator, minimum: int) -> None:
 
 
 def _click_local_upload_tab(page: Page) -> None:
+    # The dialog has changed markup across Baijiahao editor versions. Keep
+    # exact labels first, then fall back to role-labelled controls and finally
+    # a frame-wide text search when the tab is not inside a recognised modal.
+    exact_labels = (
+        "本地上传",
+        "本地图片",
+        "上传图片",
+        "上传本地图片",
+        "上传本地文件",
+        "从本地上传",
+        "选择文件",
+    )
+    label_pattern = re.compile(
+        r"(?:本地|从本地).*(?:上传|图片|文件|选择)|上传本地(?:图片|文件)|选择文件"
+    )
+
     for frame in page.frames:
-        dialog = frame.locator('[role="dialog"], .cheetah-modal, .ant-modal')
-        for text in ("本地上传", "上传图片", "本地图片"):
-            candidate = _first_interactable(dialog.get_by_text(text, exact=True))
-            if candidate is not None:
-                candidate.click()
-                return
+        roots = (
+            frame.locator('[role="dialog"], .cheetah-modal, .ant-modal, .el-dialog'),
+            frame,
+        )
+        for root in roots:
+            candidates = [root.get_by_text(text, exact=True) for text in exact_labels]
+            candidates.extend(
+                [
+                    root.locator(
+                        '[role="tab"], button, [role="button"], a'
+                    ).filter(has_text=label_pattern),
+                    root.get_by_text(label_pattern),
+                ]
+            )
+            for candidate_locator in candidates:
+                candidate = _first_interactable(candidate_locator)
+                if candidate is None:
+                    continue
+                try:
+                    candidate.click()
+                    return
+                except Exception:
+                    continue
 
 
 def _wait_for_image_file_input(page: Page, timeout: int = 15_000) -> Locator:
@@ -546,12 +757,13 @@ def _set_image_files(file_input: Locator, paths: list[str]) -> None:
     if file_input.get_attribute("multiple") is not None:
         file_input.set_input_files(paths, timeout=30_000)
         return
-    if len(paths) != 1:
-        raise PublisherError(
-            "Uploading Baijiahao images",
-            "The Baijiahao image input accepts only one file at a time.",
-        )
-    file_input.set_input_files(paths[0], timeout=30_000)
+
+    # Baijiahao's modal upload input may omit `multiple` while still
+    # appending each single-file selection to the same gallery. Playwright's
+    # Locator remains usable if the page replaces the underlying input, so
+    # selecting one path at a time supports both editor variants.
+    for path in paths:
+        file_input.set_input_files(path, timeout=30_000)
 
 
 def _set_native_file_chooser_images(
@@ -637,6 +849,23 @@ def _confirm_image_dialog(page: Page) -> None:
 
 def _insert_images(page: Page, editor: Locator, images: tuple[Path, ...]) -> None:
     before_count = _editor_image_count(editor)
+    paths = [str(image.resolve()) for image in images]
+
+    # In newer Baijiahao editors the standalone picture icon is intentionally
+    # grey until the editor has focus, while the ``+ 插入`` menu remains the
+    # working image entry point. Try that path first.
+    _focus_editor_for_image_insertion(editor)
+    menu_mode = _upload_from_insert_menu(page, paths)
+    if menu_mode == "native":
+        _wait_for_editor_images(page, editor, before_count + len(images))
+        return
+    if menu_mode == "dialog":
+        _wait_for_upload_finish(page, len(images))
+        _select_uploaded_thumbnails(page, len(images))
+        _confirm_image_dialog(page)
+        _wait_for_editor_images(page, editor, before_count + len(images))
+        return
+
     try:
         page.locator(".edui-for-insertimage").first.wait_for(
             state="visible", timeout=60_000
@@ -652,15 +881,15 @@ def _insert_images(page: Page, editor: Locator, images: tuple[Path, ...]) -> Non
             "Could not find the editor's image insertion control.",
         )
 
-    paths = [str(image.resolve()) for image in images]
     if _set_native_file_chooser_images(page, trigger, paths):
         # Direct image controls insert into the editor after the selected files
         # finish uploading; there is no modal thumbnail/confirm workflow.
         _wait_for_editor_images(page, editor, before_count + len(images))
         return
 
-    _click_local_upload_tab(page)
     try:
+        if not _image_file_inputs(page):
+            _click_local_upload_tab(page)
         file_input = _wait_for_image_file_input(page)
     except TimeoutError as exc:
         raise PublisherError(

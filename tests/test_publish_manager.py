@@ -7,6 +7,7 @@ import time
 import unittest
 from pathlib import Path
 from typing import Callable
+from unittest.mock import patch
 
 from alarkive_publisher.web.publish_manager import (
     PublishManager,
@@ -21,6 +22,7 @@ from alarkive_publisher.web.storage import ImageData, save_post
 
 
 PLATFORMS = ("xiaohongshu", "baijiahao", "wechat")
+PNG = b"\x89PNG\r\n\x1a\nminimal test data"
 
 
 def wait_for(predicate: Callable[[], bool], timeout: float = 2.0) -> None:
@@ -38,7 +40,7 @@ class PublishManagerTests(unittest.TestCase):
             name,
             {platform: f"{platform} title" for platform in PLATFORMS},
             {platform: "正文" for platform in PLATFORMS},
-            [ImageData("image.png", b"png")],
+            [ImageData("image.png", PNG)],
             posts_root=root,
         ).directory
 
@@ -142,6 +144,70 @@ class PublishManagerTests(unittest.TestCase):
             self.assertTrue(state["published"])
             self.assertEqual(state["workflow"]["status"], "failed")
             self.assertEqual(state["workflow"]["error"]["message"], "test failure")
+
+    def test_manual_browser_close_after_failure_releases_active_job(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package_a = self._make_post(root, "任务 A")
+            package_b = self._make_post(root, "任务 B")
+
+            class FakePage:
+                def __init__(self) -> None:
+                    self.closed = False
+
+                def is_closed(self) -> bool:
+                    return self.closed
+
+            class FakeContext:
+                def __init__(self, page) -> None:
+                    self.pages = [page]
+                    self.close_calls = 0
+
+                def close(self) -> None:
+                    self.close_calls += 1
+
+            class FakePlaywright:
+                def __init__(self) -> None:
+                    self.stop_calls = 0
+
+                def stop(self) -> None:
+                    self.stop_calls += 1
+
+            page = FakePage()
+            context = FakeContext(page)
+            playwright = FakePlaywright()
+
+            def fake_workflow(post, project_root, controller, *, on_browser_started):
+                del project_root
+                if post.id == package_a.name:
+                    on_browser_started(playwright, context, page)
+                    raise RuntimeError("browser-backed failure")
+                controller.completed("第二个任务完成")
+
+            manager = PublishManager(root)
+            with patch("alarkive_publisher.workflow.run_publisher_workflow", fake_workflow):
+                manager.start_publish(package_a.name)
+                wait_for(
+                    lambda: manager.get_publish_state(package_a.name)["workflow"]["status"]
+                    == "failed"
+                )
+                self.assertTrue(manager.browser_open_for(package_a.name))
+
+                # Simulate Chrome's window being closed directly, without the
+                # Web close-browser action.
+                page.closed = True
+                wait_for(lambda: not manager.has_active_workflow())
+
+                self.assertFalse(manager.browser_open_for(package_a.name))
+                self.assertEqual(context.close_calls, 0)
+                self.assertEqual(playwright.stop_calls, 1)
+
+                manager.start_publish(package_b.name)
+                wait_for(lambda: not manager.has_active_workflow())
+                self.assertEqual(
+                    manager.get_publish_state(package_b.name)["workflow"]["status"],
+                    "completed",
+                )
 
     def test_closing_browser_while_waiting_fails_workflow_and_releases_job(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

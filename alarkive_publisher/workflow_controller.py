@@ -182,7 +182,15 @@ class WebWorkflowController(WorkflowController):
     def system_step(self, step: str, message: str) -> None:
         self._update(status="running", platform=None, step=step, message=message)
 
-    def _wait(self, *, platform: str, step: str, message: str, platform_status: str) -> None:
+    def _wait(
+        self,
+        *,
+        platform: str,
+        step: str,
+        message: str,
+        platform_status: str,
+        resume_platform_status: str,
+    ) -> None:
         with self._wait_lock:
             self._continue_event.clear()
             self._waiting = True
@@ -216,8 +224,12 @@ class WebWorkflowController(WorkflowController):
             platform=platform,
             step=step,
             message="用户已确认，继续执行",
-            platform_status="running",
-            platform_message="继续执行",
+            platform_status=resume_platform_status,
+            # A final-check platform remains ready, including its original
+            # ready message; intermediate waits transition to running.
+            platform_message=(
+                "继续执行" if resume_platform_status == "running" else None
+            ),
         )
 
     def wait_for_user(
@@ -228,11 +240,23 @@ class WebWorkflowController(WorkflowController):
         prompt: str,
     ) -> None:
         del prompt
-        self._wait(platform=platform, step=step, message=message, platform_status="waiting")
+        self._wait(
+            platform=platform,
+            step=step,
+            message=message,
+            platform_status="waiting",
+            resume_platform_status="running",
+        )
 
     def ready(self, platform: str, message: str, prompt: str) -> None:
         del prompt
-        self._wait(platform=platform, step="ready", message=message, platform_status="ready")
+        self._wait(
+            platform=platform,
+            step="ready",
+            message=message,
+            platform_status="ready",
+            resume_platform_status="ready",
+        )
 
     def continue_if_waiting(self) -> bool:
         with self._wait_lock:

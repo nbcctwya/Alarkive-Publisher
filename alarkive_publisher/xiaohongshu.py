@@ -563,17 +563,31 @@ def start_browser(project_root: Path):
     """Start the shared visible, persistent browser context."""
     browser_data_dir = _automation_user_data_dir(project_root)
     before_handles = _chrome_window_snapshot()
-    playwright = sync_playwright().start()
+    playwright = None
+    context = None
     try:
+        playwright = sync_playwright().start()
         context = _launch_context(playwright, browser_data_dir)
-    except Exception:
-        playwright.stop()
+        page = context.pages[0] if context.pages else context.new_page()
+        page.bring_to_front()
+        _restore_new_chrome_window(before_handles)
+        page.set_default_timeout(15_000)
+        return playwright, context, page
+    except BaseException:
+        # Context creation can succeed before page setup fails. Keep cleanup
+        # here so callers never need a context/playwright handle they did not
+        # receive, and never let cleanup replace the original exception.
+        if context is not None:
+            try:
+                context.close()
+            except BaseException:
+                pass
+        if playwright is not None:
+            try:
+                playwright.stop()
+            except BaseException:
+                pass
         raise
-    page = context.pages[0] if context.pages else context.new_page()
-    page.bring_to_front()
-    _restore_new_chrome_window(before_handles)
-    page.set_default_timeout(15_000)
-    return playwright, context, page
 
 
 def run_xiaohongshu(

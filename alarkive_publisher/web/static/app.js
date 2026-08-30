@@ -10,6 +10,7 @@
 
     let selectedFiles = [];
     let draggedIndex = null;
+    const maxImageCount = 20;
 
     function showError(message) {
         if (!error) return;
@@ -24,13 +25,22 @@
     function addFiles(fileList) {
         const files = Array.from(fileList || []);
         if (!files.length) return;
-        const invalid = files.find((file) => !validPng(file));
-        if (invalid) {
-            showError("当前版本仅支持 PNG 图片。未添加 " + invalid.name + "。");
+        const invalid = files.filter((file) => !validPng(file));
+        const valid = files.filter(validPng);
+        if (!valid.length) {
+            showError("已忽略不支持的文件：" + invalid.map((file) => file.name).join("、") + "。");
             return;
         }
-        selectedFiles = selectedFiles.concat(files);
-        showError("");
+        if (selectedFiles.length + valid.length > maxImageCount) {
+            showError("图片数量超过限制，单个任务最多上传 " + maxImageCount + " 张图片。本次选择未添加。");
+            return;
+        }
+        selectedFiles = selectedFiles.concat(valid);
+        if (invalid.length) {
+            showError("已忽略不支持的文件：" + invalid.map((file) => file.name).join("、") + "。");
+        } else {
+            showError("");
+        }
         render();
         syncInput();
     }
@@ -199,6 +209,7 @@
             panel.dataset.browserOpen === "true" &&
             state.workflow &&
             state.workflow.status === "failed";
+        const publisherActive = state.publisher_active === true;
 
         // A failed workflow keeps its browser alive for inspection.  Until
         // that browser is explicitly closed, do not offer a second Publish
@@ -216,6 +227,11 @@
             );
             form.querySelector("button").className = "button button-secondary";
             actions.appendChild(form);
+        } else if (publisherActive) {
+            const notice = document.createElement("span");
+            notice.className = "workflow-action-note";
+            notice.textContent = "发布流程进行中";
+            actions.appendChild(notice);
         } else {
             actions.appendChild(createForm(
                 panel.dataset.publishUrl,

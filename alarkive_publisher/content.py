@@ -135,6 +135,7 @@ def _load_platform_content(
     title = platform_data["title"]
     if not isinstance(title, str) or not title.strip():
         raise ContentError(f"Error: {platform_name} title is empty or invalid.")
+    title = title.strip()
 
     if "content_file" not in platform_data:
         raise ContentError(f"Error: {platform_name} content_file is missing.")
@@ -204,11 +205,16 @@ def load_post(post_folder: Path | str) -> PostContent:
     if not isinstance(created_at, str):
         raise ContentError("Error: Package created_at is missing or invalid.")
     try:
-        datetime.fromisoformat(created_at)
+        parsed_created_at = datetime.fromisoformat(created_at)
     except ValueError as exc:
         raise ContentError(
             f"Error: Package created_at is not valid ISO 8601: {created_at}"
         ) from exc
+    if parsed_created_at.tzinfo is None or parsed_created_at.utcoffset() is None:
+        raise ContentError(
+            "Error: Package created_at must include timezone: "
+            f"{created_at}"
+        )
 
     platforms = manifest.get("platforms")
     if not isinstance(platforms, dict):

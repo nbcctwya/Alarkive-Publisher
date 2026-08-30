@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from .. import __version__
 from ..content import ContentError
 from .publish_manager import (
     PublishManager,
@@ -26,6 +27,9 @@ from .storage import (
     get_post_folder,
     get_post_detail,
     list_post_summaries,
+    MAX_IMAGE_COUNT,
+    MAX_IMAGE_SIZE_BYTES,
+    MAX_TOTAL_IMAGE_SIZE_BYTES,
     save_post,
 )
 
@@ -35,7 +39,7 @@ WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
 
-app = FastAPI(title="Alarkive Publisher", version="0.1.3")
+app = FastAPI(title="Alarkive Publisher", version=__version__)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 publish_manager = PublishManager()
@@ -45,6 +49,7 @@ def _load_web_post(post_id: str) -> dict:
     post = get_post_detail(post_id)
     post["publish_state"] = publish_manager.reconcile_post_if_needed(post_id)
     post["browser_open"] = publish_manager.browser_open_for(post_id)
+    post["publisher_active"] = publish_manager.has_active_workflow()
     return post
 
 
@@ -175,16 +180,49 @@ async def create_post(
                 raise StorageError(f"{label}不能为空。")
         if not uploaded:
             raise StorageError("至少需要上传 1 张 PNG 图片。")
-        if any(Path(image.filename or "").suffix.lower() != ".png" for image in uploaded):
-            raise StorageError("当前版本仅支持 PNG 图片。")
+
+        unsupported = [
+            image.filename or "未命名文件"
+            for image in uploaded
+            if Path(image.filename or "").suffix.lower() != ".png"
+        ]
+        valid_uploaded = [
+            image
+            for image in uploaded
+            if Path(image.filename or "").suffix.lower() == ".png"
+        ]
+        if unsupported and not valid_uploaded:
+            names = "、".join(unsupported)
+            raise StorageError(
+                f"已忽略不支持的文件：{names}。至少需要上传 1 张 PNG 图片。"
+            )
+        if len(valid_uploaded) > MAX_IMAGE_COUNT:
+            raise StorageError(
+                f"图片数量超过限制，单个任务最多上传 {MAX_IMAGE_COUNT} 张图片。"
+            )
 
         image_data: list[ImageData] = []
-        for image in uploaded:
+        total_read = 0
+        for image in valid_uploaded:
             try:
-                data = await image.read()
+                remaining_total = MAX_TOTAL_IMAGE_SIZE_BYTES - total_read
+                read_limit = min(MAX_IMAGE_SIZE_BYTES, remaining_total) + 1
+                data = await image.read(read_limit)
             except Exception as exc:
                 raise StorageError(f"读取图片失败：{image.filename}") from exc
-            image_data.append(ImageData(filename=image.filename or "image.png", data=data))
+            filename = image.filename or "image.png"
+            if len(data) > MAX_IMAGE_SIZE_BYTES:
+                raise StorageError(
+                    f"图片过大：{filename}。单张图片不能超过 "
+                    f"{MAX_IMAGE_SIZE_BYTES // (1024 * 1024)} MB。"
+                )
+            total_read += len(data)
+            if total_read > MAX_TOTAL_IMAGE_SIZE_BYTES:
+                raise StorageError(
+                    "图片总大小超过限制：单个任务的图片总大小不能超过 "
+                    f"{MAX_TOTAL_IMAGE_SIZE_BYTES // (1024 * 1024)} MB。"
+                )
+            image_data.append(ImageData(filename=filename, data=data))
 
         saved = save_post(
             name=name,
@@ -303,6 +341,10 @@ async def publish_state_api(post_id: str) -> dict:
     try:
         state = publish_manager.reconcile_post_if_needed(post_id)
         state["browser_open"] = publish_manager.browser_open_for(post_id)
+        # This is process state, not inferred from the persisted workflow
+        # status. It closes the gap between reset-local-marker and the single
+        # active-browser guard.
+        state["publisher_active"] = publish_manager.has_active_workflow()
         return state
     except (StorageError, PublishStateError):
         raise HTTPException(status_code=404, detail="发布状态不存在")
@@ -311,7 +353,7 @@ async def publish_state_api(post_id: str) -> dict:
 def main() -> None:
     host = os.environ.get("ALARKIVE_WEB_HOST", "127.0.0.1")
     port = int(os.environ.get("ALARKIVE_WEB_PORT", "8000"))
-    print("Alarkive Publisher Web Content Manager v0.1.3")
+    print(f"Alarkive Publisher Web Content Manager v{__version__}")
     print(f"Open http://{host}:{port}")
     uvicorn.run(app, host=host, port=port)
 

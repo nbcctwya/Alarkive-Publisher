@@ -212,6 +212,7 @@ code { padding: 2px 5px; border-radius: 4px; color: #475569; background: #e2e8f0
 .publish-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
 .published-at { min-height: 24px; margin: 6px 0 0; color: var(--muted); font-size: 13px; }
 .publish-actions form { margin: 0; }
+.workflow-action-note { color: var(--accent); font-size: 13px; font-weight: 700; }
 .workflow-block { margin-top: 22px; padding: 18px; border-radius: 8px; background: var(--surface-soft); }
 .workflow-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .workflow-heading h3 { margin: 0; }
