@@ -107,3 +107,21 @@ class PackageLoaderTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ContentError, "must include timezone"):
                 load_post(package)
+
+    def test_baijiahao_duplicate_marker_is_rejected_before_browser_use(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            package = self._make_package(Path(temp))
+            body_path = package / "content" / "baijiahao.md"
+            body_path.write_text("正文\n\n[[image:1]]\n\n[[image:1]]", encoding="utf-8")
+
+            with self.assertRaisesRegex(ContentError, "duplicate image marker: \[\[image:1\]\]"):
+                load_post(package)
+
+    def test_baijiahao_out_of_range_marker_is_rejected_before_browser_use(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            package = self._make_package(Path(temp))
+            body_path = package / "content" / "baijiahao.md"
+            body_path.write_text("正文\n\n[[image:3]]", encoding="utf-8")
+
+            with self.assertRaisesRegex(ContentError, "invalid image marker: \[\[image:3\]\]"):
+                load_post(package)

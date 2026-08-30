@@ -6,11 +6,167 @@
     const grid = document.getElementById("preview-grid");
     const error = document.getElementById("upload-error");
     const form = document.getElementById("post-form");
+    const baijiahaoBody = document.getElementById("baijiahao_body");
+    const markerStatus = document.getElementById("baijiahao-marker-status");
+    const promptButton = document.getElementById("copy-ai-prompt");
+    const promptStatus = document.getElementById("prompt-status");
+    const promptFallback = document.getElementById("ai-prompt-fallback");
     if (!input || !zone || !grid || !form) return;
 
     let selectedFiles = [];
     let draggedIndex = null;
     const maxImageCount = 20;
+
+    function markerIndexes(text) {
+        const indexes = [];
+        String(text || "").split(/\r?\n/).forEach((line) => {
+            const match = line.match(/^[ \t]*\[\[image:(\d+)\]\][ \t]*$/);
+            if (match) indexes.push(Number(match[1]));
+        });
+        return indexes;
+    }
+
+    function uniqueNumbers(values) {
+        return Array.from(new Set(values));
+    }
+
+    function renderMarkerStatus() {
+        if (!markerStatus || !baijiahaoBody) return;
+        const count = selectedFiles.length;
+        if (!count) {
+            markerStatus.textContent = "请先添加图片，再校验图片占位符。";
+            markerStatus.className = "marker-status warning";
+            return;
+        }
+
+        const indexes = markerIndexes(baijiahaoBody.value);
+        if (!indexes.length) {
+            markerStatus.textContent = "未使用图片占位符；发布时将按原始顺序把全部图片追加到正文末尾。";
+            markerStatus.className = "marker-status";
+            return;
+        }
+
+        const invalid = uniqueNumbers(indexes.filter((index) => index < 1 || index > count));
+        const duplicates = uniqueNumbers(
+            indexes.filter((index, position) => indexes.indexOf(index) !== position)
+        );
+        const used = uniqueNumbers(indexes.filter((index) => index >= 1 && index <= count));
+        const unused = [];
+        for (let index = 1; index <= count; index += 1) {
+            if (!used.includes(index)) unused.push(index);
+        }
+
+        const messages = [];
+        if (invalid.length) {
+            messages.push("⚠ 无效占位符：" + invalid.map((index) => "[[image:" + index + "]]" ).join("、"));
+        }
+        if (duplicates.length) {
+            messages.push("⚠ 图片 " + duplicates.join("、") + " 被重复引用");
+        }
+        messages.push((invalid.length || duplicates.length || unused.length ? "已引用 " : "✓ 已引用 ") + used.length + " / " + count + " 张图片");
+        if (unused.length) messages.push("未使用：图片 " + unused.join("、"));
+        markerStatus.textContent = messages.join("；");
+        markerStatus.className = "marker-status" + (invalid.length || duplicates.length || unused.length ? " warning" : "");
+    }
+
+    function buildAiPrompt() {
+        const count = selectedFiles.length;
+        const markerList = Array.from(
+            { length: count },
+            (_, index) => "[[image:" + (index + 1) + "]]"
+        ).join("\n");
+        return [
+            "请根据我们当前对话中已经完成的研究、底稿和配图，生成最终的百家号正文。",
+            "",
+            "要求：",
+            "1. 直接输出可以发布的百家号正文，不要解释写作过程，不要输出标题，不要输出“以下是正文”之类的说明，不要使用代码块。",
+            "2. 文风通俗易懂、自然流畅、信息完整，不要过度书面化，不要写成论文或报告。",
+            "3. 当前一共有 " + count + " 张配图。图片编号严格对应 Alarkive Publisher 当前图片列表顺序：",
+            markerList,
+            "请根据当前对话中这些图片的实际内容，以及文章上下文，把图片安排在最适合阅读的位置。优先使用全部图片，不要把所有图片集中放在文章末尾。",
+            "",
+            "4. 只能使用以上图片占位符。不要引用不存在的图片编号，不要重复使用同一张图片。每张图片最多使用一次。",
+            "",
+            "5. 每个图片占位符必须单独占一行。",
+            "例如：",
+            "上一段正文。",
+            "[[image:1]]",
+            "下一段正文。",
+            "错误：上一段正文。[[image:1]]下一段正文。",
+            "6. 不要修改图片占位符格式。必须严格使用：",
+            markerList,
+            "不要输出：",
+            "[image:1]",
+            "![image:1]",
+            "{{image:1}}",
+            "image:1",
+            "7. 除图片占位符外，其余正文正常输出即可，可以使用普通 Markdown 的段落、小标题、加粗、列表。",
+            "8. 不要在正文中解释“下面插入图片”“这里放一张图”“如图所示”等提示语，图片应自然融入阅读流程。"
+        ].join("\n");
+    }
+
+    function fallbackCopy(text) {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        let copied = false;
+        try {
+            copied = document.execCommand("copy");
+        } catch (_) {
+            copied = false;
+        }
+        textarea.remove();
+        return copied;
+    }
+
+    function showPromptStatus(message, isError) {
+        if (!promptStatus) return;
+        promptStatus.textContent = message;
+        promptStatus.className = "prompt-status" + (isError ? " error" : "");
+    }
+
+    function showPromptFallback(prompt) {
+        if (!promptFallback) return;
+        promptFallback.value = prompt;
+        promptFallback.hidden = false;
+        promptFallback.focus();
+        promptFallback.select();
+    }
+
+    async function copyAiPrompt() {
+        if (!selectedFiles.length) {
+            showPromptStatus("请先添加图片，再生成兼容 Alarkive 的 Prompt。", true);
+            renderMarkerStatus();
+            return;
+        }
+        const prompt = buildAiPrompt();
+        let copied = false;
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(prompt);
+                copied = true;
+            }
+        } catch (_) {
+            copied = false;
+        }
+        if (!copied) copied = fallbackCopy(prompt);
+        if (copied) {
+            showPromptStatus("✓ Prompt 已复制", false);
+            if (promptFallback) promptFallback.hidden = true;
+            const original = promptButton.textContent;
+            promptButton.textContent = "✓ 已复制";
+            window.setTimeout(() => {
+                promptButton.textContent = original;
+            }, 2500);
+        } else {
+            showPromptFallback(prompt);
+            showPromptStatus("复制失败，请手动复制下方 Prompt。", true);
+        }
+    }
 
     function showError(message) {
         if (!error) return;
@@ -98,6 +254,7 @@
             });
             grid.appendChild(card);
         });
+        renderMarkerStatus();
     }
 
     function sortButton(text, label, action) {
@@ -124,6 +281,11 @@
     }
 
     input.addEventListener("change", () => addFiles(input.files));
+    if (baijiahaoBody) {
+        baijiahaoBody.addEventListener("input", renderMarkerStatus);
+        baijiahaoBody.addEventListener("change", renderMarkerStatus);
+    }
+    if (promptButton) promptButton.addEventListener("click", copyAiPrompt);
     zone.addEventListener("dragover", (event) => {
         event.preventDefault();
         zone.classList.add("drag-over");
@@ -149,6 +311,8 @@
         }
         syncInput();
     });
+
+    renderMarkerStatus();
 })();
 
 (function () {

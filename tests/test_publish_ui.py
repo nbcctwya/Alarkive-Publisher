@@ -38,6 +38,30 @@ class _TemplateRequest:
 
 
 class PublishUiStateTests(unittest.TestCase):
+    def test_create_page_exposes_inline_image_prompt_and_marker_status(self) -> None:
+        template = web_app.templates.get_template("create.html")
+        rendered = template.render(request=_TemplateRequest(), form={})
+        script = (web_app.STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="copy-ai-prompt"', rendered)
+        self.assertIn("复制 AI 生成 Prompt", rendered)
+        self.assertIn('id="baijiahao-marker-status"', rendered)
+        self.assertIn('id="prompt-status"', rendered)
+        self.assertIn('id="ai-prompt-fallback"', rendered)
+        self.assertIn("selectedFiles.length", script)
+        self.assertIn("[[image:", script)
+        self.assertIn("{ length: count }", script)
+        self.assertIn("index + 1", script)
+        self.assertIn("当前图片列表顺序", script)
+        self.assertIn("不要输出标题", script)
+        self.assertIn("不要使用代码块", script)
+        self.assertIn("优先使用全部图片", script)
+        self.assertIn("只能使用以上图片占位符", script)
+        self.assertIn("navigator.clipboard.writeText", script)
+        self.assertIn("复制失败，请手动复制下方 Prompt", script)
+        self.assertIn("被重复引用", script)
+        self.assertIn("未使用：图片", script)
+
     def test_mixed_upload_filters_unsupported_files(self) -> None:
         captured: dict = {}
 

@@ -7,6 +7,14 @@ from pathlib import Path
 from playwright.sync_api import Locator, Page, TimeoutError
 
 from .content import PlatformContent, PostContent
+from .inline_images import (
+    ContentBlock,
+    ImageBlock,
+    TextBlock,
+    append_unused_images,
+    inline_image_error,
+    validate_inline_image_text,
+)
 from .renderer import RenderedContent, render_for_platform
 from .workflow_controller import CLIWorkflowController, WorkflowController
 from .xiaohongshu import PublisherError, _run_step
@@ -397,6 +405,130 @@ def _fill_body(page: Page, body: Locator, content: PlatformContent) -> None:
         raise PublisherError(
             "Filling Baijiahao content",
             "The Baijiahao editor did not preserve the rendered list semantic.",
+        )
+
+
+def _inline_text_blocks_are_present(
+    body: Locator,
+    blocks: tuple[ContentBlock, ...],
+) -> bool:
+    """Check text blocks in order while allowing inserted image nodes between them."""
+
+    actual = _editor_validation_text(_read_locator_value(body))
+    cursor = 0
+    for block in blocks:
+        if not isinstance(block, TextBlock):
+            continue
+        expected = _editor_validation_text(
+            render_for_platform("baijiahao", block.text).text
+        )
+        if not expected:
+            continue
+        position = actual.find(expected, cursor)
+        if position < 0:
+            return False
+        cursor = position + len(expected)
+    return True
+
+
+def _clear_editor(body: Locator) -> None:
+    """Clear the editor while notifying its model of the change."""
+
+    try:
+        body.click()
+        body.press("ControlOrMeta+A")
+        body.press("Backspace")
+        return
+    except Exception:
+        pass
+
+    try:
+        body.evaluate(
+            """
+            element => {
+                element.focus();
+                element.innerHTML = '';
+                element.dispatchEvent(new Event('input', { bubbles: true }));
+                element.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            """
+        )
+    except Exception as exc:
+        raise PublisherError(
+            "Filling Baijiahao content",
+            f"Could not clear the Baijiahao editor: {exc}",
+        ) from exc
+
+
+def _append_rendered_html(body: Locator, rendered: RenderedContent) -> None:
+    """Append one rendered text block and leave the caret at the end."""
+
+    if not rendered.html:
+        return
+    try:
+        body.evaluate(
+            """
+            (element, value) => {
+                element.focus();
+                const template = element.ownerDocument.createElement('template');
+                template.innerHTML = value;
+                element.appendChild(template.content);
+                const selection = element.ownerDocument.getSelection();
+                if (selection) {
+                    const range = element.ownerDocument.createRange();
+                    range.selectNodeContents(element);
+                    range.collapse(false);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                }
+                element.dispatchEvent(new Event('input', { bubbles: true }));
+                element.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            """,
+            rendered.html,
+        )
+    except Exception as exc:
+        raise PublisherError(
+            "Filling Baijiahao content",
+            f"Could not append rendered content to the Baijiahao editor: {exc}",
+        ) from exc
+
+
+def _inline_image_blocks(
+    content: PlatformContent,
+) -> tuple[tuple[ContentBlock, ...], bool]:
+    """Build a validated inline-image plan without touching the browser."""
+
+    blocks, validation = validate_inline_image_text(content.body, len(content.images))
+    error = inline_image_error(validation)
+    if error is not None:
+        raise PublisherError("Parsing Baijiahao inline images", str(error))
+    if not validation.has_markers:
+        return blocks, False
+    return append_unused_images(blocks, validation), True
+
+
+def _fill_body_with_inline_images(
+    page: Page,
+    body: Locator,
+    content: PlatformContent,
+    blocks: tuple[ContentBlock, ...],
+) -> None:
+    """Append text and insert each referenced image in block order."""
+
+    for block in blocks:
+        if isinstance(block, TextBlock):
+            rendered = render_for_platform("baijiahao", block.text)
+            _append_rendered_html(body, rendered)
+            continue
+        if isinstance(block, ImageBlock):
+            image = content.images[block.index - 1]
+            _insert_images(page, body, (image,))
+
+    if not _inline_text_blocks_are_present(body, blocks):
+        raise PublisherError(
+            "Filling Baijiahao content",
+            "The Baijiahao editor did not contain the provided text after inline image insertion.",
         )
 
 
@@ -923,12 +1055,18 @@ def run_baijiahao(
 
     controller.step("baijiahao", "filling_content", "填写标题和正文")
     body: Locator | None = None
+    inline_blocks: tuple[ContentBlock, ...] = ()
+    has_inline_images = False
 
     def fill_content() -> None:
-        nonlocal body
+        nonlocal body, inline_blocks, has_inline_images
+        inline_blocks, has_inline_images = _inline_image_blocks(post.baijiahao)
         _fill_title(page, post.baijiahao)
         body = _body_locator(page)
-        _fill_body(page, body, post.baijiahao)
+        if has_inline_images:
+            _clear_editor(body)
+        else:
+            _fill_body(page, body, post.baijiahao)
 
     _run_step("Filling Baijiahao title and content", fill_content)
     if body is None:
@@ -941,5 +1079,14 @@ def run_baijiahao(
     )
     _run_step(
         "Uploading Baijiahao images",
-        lambda: _insert_images(page, body, post.baijiahao.images),
+        lambda: (
+            _fill_body_with_inline_images(
+                page,
+                body,
+                post.baijiahao,
+                inline_blocks,
+            )
+            if has_inline_images
+            else _insert_images(page, body, post.baijiahao.images)
+        ),
     )

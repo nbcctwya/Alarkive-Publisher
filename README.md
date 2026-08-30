@@ -1,4 +1,4 @@
-# Alarkive Publisher v0.1.4
+# Alarkive Publisher v0.1.5
 
 当前完整工作流为：
 
@@ -14,9 +14,23 @@ CLI Publisher
 小红书 → 百家号 → 微信公众号贴图
 ```
 
-Web Content Manager 负责创建 Package；CLI Publisher 负责读取 Package 并执行三个平台的 Playwright Dry Run。Package 内容仍然只由 `manifest.json`、`content/` 和 `images/` 组成；v0.1.4 的运行状态另存为 Publisher sidecar。当前仍然不会点击任何平台的最终“发布/发表”按钮。
+Web Content Manager 负责创建 Package；CLI Publisher 负责读取 Package 并执行三个平台的 Playwright Dry Run。Package 内容仍然只由 `manifest.json`、`content/` 和 `images/` 组成；v0.1.5 的运行状态另存为 Publisher sidecar。当前仍然不会点击任何平台的最终“发布/发表”按钮。
 
-v0.1.4 继续由 Web Content Manager 在任务详情页启动后台准备流程，并在网页中查看离散步骤、登录/人工检查等待点和失败信息。每个进程同时只允许一个 Web Publisher 使用共享的 `.browser-data/` profile。
+v0.1.5 继续由 Web Content Manager 在任务详情页启动后台准备流程，并在网页中查看离散步骤、登录/人工检查等待点和失败信息。每个进程同时只允许一个 Web Publisher 使用共享的 `.browser-data/` profile。
+
+## v0.1.5 — Baijiahao Inline Images
+
+百家号正文现在支持独立成行的 `[[image:N]]` 图片占位符。创建任务时可以点击“复制 AI 生成 Prompt”，将 Prompt 粘贴到 ChatGPT、Kimi、Claude、Gemini、DeepSeek 等 AI 工具，让 AI 生成可以直接粘贴回百家号正文输入框的内容。Publisher 会在百家号编辑器中按占位符位置插入对应图片。
+
+`[[image:N]]` 是 Alarkive Publisher 的 control marker，不是标准 Markdown。图片编号始终对应创建页面当前显示顺序；未使用的图片会在 Publisher 执行时按原始顺序追加到正文末尾。没有占位符的旧 Package 继续使用 v0.1.4 的“所有图片追加到文末”行为。
+
+## v0.1.5 Changelog
+
+- 新增百家号 `[[image:N]]` 行内图片占位符协议，支持按正文位置插入图片。
+- 新增根据当前图片数量和顺序动态生成的“复制 AI 生成 Prompt”按钮。
+- 新增百家号正文占位符实时校验：重复、越界和未使用图片会给出提示。
+- 百家号 Publisher 在执行前防御性校验占位符；重复或越界 marker 会直接失败，未使用图片追加到正文末尾。
+- 没有 marker 的旧 Package 保持 v0.1.4 的末尾追加图片行为，Package schema 仍为 `0.1`。
 
 ## v0.1.4 Changelog
 
@@ -80,6 +94,8 @@ http://127.0.0.1:8000
 
 在网页中填写任务名称、三个平台的标题和正文，选择 PNG 图片并调整顺序，然后点击“保存图文”。任务会保存到项目根目录的 `posts/`，不需要创建或复制任何旧格式目录。上传内容必须是实际 PNG 文件（包含 PNG signature），每张不超过 20 MB，每个任务不超过 20 张且图片总大小不超过 100 MB；混合选择时，非 PNG 文件会被忽略并提示。
 
+百家号正文支持独立成行的图片占位符，例如 `[[image:1]]`、`[[image:2]]`。先上传并调整图片顺序，再点击百家号正文旁的“复制 AI 生成 Prompt”，将 Prompt 交给当前使用的 AI 工具。AI 输出正文后，直接复制回百家号正文输入框即可。页面会实时提示 marker 的有效性、重复引用和未使用图片情况。
+
 Package 目录结构如下：
 
 ```text
@@ -125,7 +141,7 @@ Publisher 会在启动浏览器前完整读取并验证：
 - manifest 指定的每个平台图片列表及顺序
 - 所有正文和图片文件是否存在、是否位于 Package 内
 
-验证通过后，Publisher 会在运行时使用 Markdown Renderer：小红书和微信公众号贴图使用可读的纯文本，百家号使用受控 HTML 富文本。三个标题仍然直接使用 manifest 中的普通字符串。
+验证通过后，Publisher 会在运行时使用 Markdown Renderer：小红书和微信公众号贴图使用可读的纯文本，百家号使用受控 HTML 富文本。包含 marker 的百家号正文会先拆分为文本块和图片块，再按顺序写入编辑器；三个标题仍然直接使用 manifest 中的普通字符串。
 
 ## Markdown Renderer
 
@@ -173,7 +189,7 @@ CLI 仍通过控制器使用 Enter 暂停。三个平台仍然都只填写内容
 
 ## 发布安全边界
 
-v0.1.4 仍然绝对不会自动点击小红书、百家号或微信公众号的最终按钮，包括“发布”“发表”“立即发布”“确认发布”“群发”等。Publisher 只打开编辑器、上传图片、填写标题和正文，并停在最终发布页。若用户确实要发布，仍需在打开的浏览器中手工点击平台按钮。
+v0.1.5 仍然绝对不会自动点击小红书、百家号或微信公众号的最终按钮，包括“发布”“发表”“立即发布”“确认发布”“群发”等。Publisher 只打开编辑器、上传图片、填写标题和正文，并停在最终发布页。若用户确实要发布，仍需在打开的浏览器中手工点击平台按钮。
 
 ### Package 错误
 
@@ -184,7 +200,7 @@ Error: manifest.json not found.
 This folder is not a valid Alarkive Package v0.1.
 ```
 
-Package Loader 是只读的，不会修改 `manifest.json`、Markdown 或图片文件。旧版 `xiaohongshu/*.txt`、`baijiahao/*.txt`、`wechat/*.txt` 目录格式不再是主流程，也不由 v0.1.4 的 `main.py` 读取。
+Package Loader 是只读的，不会修改 `manifest.json`、Markdown 或图片文件。旧版 `xiaohongshu/*.txt`、`baijiahao/*.txt`、`wechat/*.txt` 目录格式不再是主流程，也不由 v0.1.5 的 `main.py` 读取。
 
 ## 手工登录
 

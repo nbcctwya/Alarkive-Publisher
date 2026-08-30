@@ -153,6 +153,9 @@ h4 { margin-bottom: 12px; font-size: 16px; font-weight: 600; }
 .required-note { color: var(--muted); font-size: 12px; }
 .field-label { display: block; margin: 0 0 7px; font-size: 14px; font-weight: 600; }
 .field-label span, legend { color: var(--accent); }
+.field-label-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.field-label-row .field-label { margin-bottom: 7px; }
+.prompt-button { min-height: 32px; padding: 5px 10px; font-size: 12px; }
 .text-input, .body-input {
     width: 100%;
     border: 1px solid #cbd5e1;
@@ -166,6 +169,11 @@ h4 { margin-bottom: 12px; font-size: 16px; font-weight: 600; }
 .text-input { height: 42px; padding: 8px 11px; margin-bottom: 18px; }
 .body-input { min-height: 260px; padding: 10px 11px; resize: vertical; line-height: 1.65; }
 .text-input:focus, .body-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #dbeafe; }
+.marker-status, .prompt-status { min-height: 21px; margin: 8px 0 0; font-size: 12px; }
+.marker-status { color: #15803d; }
+.marker-status.warning, .prompt-status.error { color: var(--danger); }
+.prompt-status { color: #15803d; }
+.prompt-fallback { width: 100%; margin-top: 6px; padding: 8px 9px; resize: vertical; border: 1px solid #cbd5e1; border-radius: 7px; color: var(--ink); background: var(--surface-soft); font: 12px/1.55 Consolas, "Microsoft YaHei", monospace; }
 
 .platform-fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .platform-card { min-width: 0; margin: 0; padding: 18px; border: 1px solid var(--line); border-radius: 9px; }

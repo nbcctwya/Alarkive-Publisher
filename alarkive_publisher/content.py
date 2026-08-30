@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .inline_images import inline_image_error, validate_inline_image_text
+
 
 PACKAGE_SCHEMA_VERSION = "0.1"
 PACKAGE_ID_RE = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{4}$")
@@ -228,6 +230,13 @@ def load_post(post_folder: Path | str) -> PostContent:
         )
         for platform in PLATFORMS
     }
+    _, inline_validation = validate_inline_image_text(
+        platform_contents["baijiahao"].body,
+        len(platform_contents["baijiahao"].images),
+    )
+    inline_error = inline_image_error(inline_validation)
+    if inline_error is not None:
+        raise ContentError(f"Error: {inline_error}")
     return PostContent(
         folder=package_folder,
         id=package_id,
