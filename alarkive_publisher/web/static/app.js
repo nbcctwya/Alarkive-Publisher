@@ -8,9 +8,15 @@
     const form = document.getElementById("post-form");
     const baijiahaoBody = document.getElementById("baijiahao_body");
     const markerStatus = document.getElementById("baijiahao-marker-status");
-    const promptButton = document.getElementById("copy-ai-prompt");
-    const promptStatus = document.getElementById("prompt-status");
-    const promptFallback = document.getElementById("ai-prompt-fallback");
+    const xiaohongshuPromptButton = document.getElementById("copy-xiaohongshu-prompt");
+    const baijiahaoPromptButton = document.getElementById("copy-baijiahao-prompt");
+    const wechatPromptButton = document.getElementById("copy-wechat-prompt");
+    const xiaohongshuPromptStatus = document.getElementById("xiaohongshu-prompt-status");
+    const baijiahaoPromptStatus = document.getElementById("baijiahao-prompt-status");
+    const wechatPromptStatus = document.getElementById("wechat-prompt-status");
+    const xiaohongshuPromptFallback = document.getElementById("xiaohongshu-prompt-fallback");
+    const baijiahaoPromptFallback = document.getElementById("baijiahao-prompt-fallback");
+    const wechatPromptFallback = document.getElementById("wechat-prompt-fallback");
     if (!input || !zone || !grid || !form) return;
 
     let selectedFiles = [];
@@ -69,7 +75,33 @@
         markerStatus.className = "marker-status" + (invalid.length || duplicates.length || unused.length ? " warning" : "");
     }
 
-    function buildAiPrompt() {
+    function buildXiaohongshuPrompt() {
+        return [
+            "请根据我们当前对话中已经完成的研究、底稿和配图，生成最终的小红书正文。",
+            "",
+            "要求：",
+            "1. 直接输出可以发布的小红书正文，不要解释写作过程，不要输出标题，不要输出“以下是正文”之类的说明，不要使用代码块。",
+            "2. 内容要比长文章明显更精炼。保留最有价值、最有趣、最容易让人记住的信息，不要把研究过程和所有细节都塞进去。",
+            "3. 符合小红书的阅读习惯和注意力机制：",
+            "- 开头尽快进入主题，让用户前几行就知道这篇内容为什么值得看；",
+            "- 段落尽量短，避免连续大段文字；",
+            "- 信息密度高，但不要写得像论文、报告或新闻通稿；",
+            "- 可以适当使用 Emoji、短句、分点和留白提升阅读节奏，但不要过量；",
+            "- 重点内容可以适当强化，但不要制造廉价的夸张感。",
+            "4. 语气自然、轻松、有交流感，像一个真正了解这件事的人在和读者分享，而不是 AI 在总结资料。",
+            "5. 不要为了制造“爆款感”强行使用夸张标题党表达，例如：",
+            "“震惊”",
+            "“太炸裂了”",
+            "“封神”",
+            "“所有人都必须知道”",
+            "除非上下文本身确实适合这种表达。",
+            "6. 可以适当加入自己的判断、感受或一句自然的总结，让内容有人味，但不要编造我们当前对话中没有形成的观点。",
+            "7. 不需要在正文中描述图片位置，也不要输出任何图片占位符。图片会由 Alarkive Publisher 单独处理。",
+            "8. 最终正文必须可以直接复制并粘贴进 Alarkive Publisher 的“小红书正文”输入框。"
+        ].join("\n");
+    }
+
+    function buildBaijiahaoPrompt() {
         const count = selectedFiles.length;
         const markerList = Array.from(
             { length: count },
@@ -121,6 +153,28 @@
         ].join("\n");
     }
 
+    function buildWechatPrompt() {
+        return [
+            "请根据我们当前对话中已经完成的研究、底稿和配图，生成最终的微信公众号小绿书正文。",
+            "",
+            "要求：",
+            "1. 直接输出可以发布的小绿书正文，不要解释写作过程，不要输出标题，不要输出“以下是正文”之类的说明，不要使用代码块。",
+            "2. 内容尽可能简洁、直观。优先保留最重要、最有价值、最容易理解的信息，不要写成长篇公众号文章。",
+            "3. 符合微信图文的阅读习惯：",
+            "- 开头直接进入主题；",
+            "- 段落短；",
+            "- 一段尽量只表达一个重点；",
+            "- 重要信息放在容易扫读的位置；",
+            "- 不要连续堆大量背景信息；",
+            "- 让读者用较短时间就能看懂这件事。",
+            "4. 语气自然、克制、清晰，可以有一点个人表达，但不要太营销，不要写成媒体通稿、研究报告或营销软文。",
+            "5. 不需要刻意追求小红书式的强情绪和“爆款感”。相比制造刺激，更重视清楚、舒服、值得读完。",
+            "6. 可以适当使用小标题、短句、分点和留白，让手机阅读更轻松，但不要把文章切得过碎。",
+            "7. 不需要在正文中描述图片位置，也不要输出任何图片占位符。图片会由 Alarkive Publisher 单独处理。",
+            "8. 最终正文必须可以直接复制并粘贴进 Alarkive Publisher 的“微信公众号正文”输入框。"
+        ].join("\n");
+    }
+
     function fallbackCopy(text) {
         const textarea = document.createElement("textarea");
         textarea.value = text;
@@ -139,27 +193,21 @@
         return copied;
     }
 
-    function showPromptStatus(message, isError) {
-        if (!promptStatus) return;
-        promptStatus.textContent = message;
-        promptStatus.className = "prompt-status" + (isError ? " error" : "");
+    function showPromptStatus(statusElement, message, isError) {
+        if (!statusElement) return;
+        statusElement.textContent = message;
+        statusElement.className = "prompt-status" + (isError ? " error" : "");
     }
 
-    function showPromptFallback(prompt) {
-        if (!promptFallback) return;
-        promptFallback.value = prompt;
-        promptFallback.hidden = false;
-        promptFallback.focus();
-        promptFallback.select();
+    function showPromptFallback(fallbackElement, prompt) {
+        if (!fallbackElement) return;
+        fallbackElement.value = prompt;
+        fallbackElement.hidden = false;
+        fallbackElement.focus();
+        fallbackElement.select();
     }
 
-    async function copyAiPrompt() {
-        if (!selectedFiles.length) {
-            showPromptStatus("请先添加图片，再生成兼容 Alarkive 的 Prompt。", true);
-            renderMarkerStatus();
-            return;
-        }
-        const prompt = buildAiPrompt();
+    async function copyPrompt(button, prompt, statusElement, fallbackElement, successMessage) {
         let copied = false;
         try {
             if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -171,17 +219,29 @@
         }
         if (!copied) copied = fallbackCopy(prompt);
         if (copied) {
-            showPromptStatus("✓ Prompt 已复制", false);
-            if (promptFallback) promptFallback.hidden = true;
-            const original = promptButton.textContent;
-            promptButton.textContent = "✓ 已复制";
+            showPromptStatus(statusElement, successMessage, false);
+            if (fallbackElement) fallbackElement.hidden = true;
+            const original = button.textContent;
+            button.textContent = "✓ 已复制";
             window.setTimeout(() => {
-                promptButton.textContent = original;
+                button.textContent = original;
             }, 2500);
         } else {
-            showPromptFallback(prompt);
-            showPromptStatus("复制失败，请手动复制下方 Prompt。", true);
+            showPromptFallback(fallbackElement, prompt);
+            showPromptStatus(statusElement, "复制失败，请手动复制下方 Prompt。", true);
         }
+    }
+
+    function bindPrompt(button, statusElement, fallbackElement, builder, successMessage, requiresImages) {
+        if (!button) return;
+        button.addEventListener("click", async () => {
+            if (requiresImages && !selectedFiles.length) {
+                showPromptStatus(statusElement, "请先添加图片，再生成兼容 Alarkive 的 Prompt。", true);
+                renderMarkerStatus();
+                return;
+            }
+            await copyPrompt(button, builder(), statusElement, fallbackElement, successMessage);
+        });
     }
 
     function showError(message) {
@@ -301,7 +361,30 @@
         baijiahaoBody.addEventListener("input", renderMarkerStatus);
         baijiahaoBody.addEventListener("change", renderMarkerStatus);
     }
-    if (promptButton) promptButton.addEventListener("click", copyAiPrompt);
+    bindPrompt(
+        xiaohongshuPromptButton,
+        xiaohongshuPromptStatus,
+        xiaohongshuPromptFallback,
+        buildXiaohongshuPrompt,
+        "✓ 小红书 Prompt 已复制",
+        false
+    );
+    bindPrompt(
+        baijiahaoPromptButton,
+        baijiahaoPromptStatus,
+        baijiahaoPromptFallback,
+        buildBaijiahaoPrompt,
+        "✓ 百家号 Prompt 已复制",
+        true
+    );
+    bindPrompt(
+        wechatPromptButton,
+        wechatPromptStatus,
+        wechatPromptFallback,
+        buildWechatPrompt,
+        "✓ 小绿书 Prompt 已复制",
+        false
+    );
     zone.addEventListener("dragover", (event) => {
         event.preventDefault();
         zone.classList.add("drag-over");

@@ -38,33 +38,84 @@ class _TemplateRequest:
 
 
 class PublishUiStateTests(unittest.TestCase):
-    def test_create_page_exposes_inline_image_prompt_and_marker_status(self) -> None:
+    def test_create_page_exposes_platform_prompts_and_marker_status(self) -> None:
         template = web_app.templates.get_template("create.html")
         rendered = template.render(request=_TemplateRequest(), form={})
         script = (web_app.STATIC_DIR / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('id="copy-ai-prompt"', rendered)
-        self.assertIn("复制 AI 生成 Prompt", rendered)
+        self.assertIn('id="copy-xiaohongshu-prompt"', rendered)
+        self.assertIn("复制小红书 Prompt", rendered)
+        self.assertIn('id="copy-baijiahao-prompt"', rendered)
+        self.assertIn("复制百家号 Prompt", rendered)
+        self.assertIn('id="copy-wechat-prompt"', rendered)
+        self.assertIn("复制小绿书 Prompt", rendered)
+        self.assertNotIn('id="copy-ai-prompt"', rendered)
+        self.assertNotIn("复制 AI 生成 Prompt", rendered)
         self.assertIn('id="baijiahao-marker-status"', rendered)
-        self.assertIn('id="prompt-status"', rendered)
-        self.assertIn('id="ai-prompt-fallback"', rendered)
+        for platform in ("xiaohongshu", "baijiahao", "wechat"):
+            self.assertIn(f'id="{platform}-prompt-status"', rendered)
+            self.assertIn(f'id="{platform}-prompt-fallback"', rendered)
+
         self.assertIn("selectedFiles.length", script)
-        self.assertIn("[[image:", script)
+        self.assertIn("function buildXiaohongshuPrompt()", script)
+        self.assertIn("function buildBaijiahaoPrompt()", script)
+        self.assertIn("function buildWechatPrompt()", script)
+        self.assertIn("function copyPrompt(", script)
         self.assertIn("{ length: count }", script)
         self.assertIn("index + 1", script)
+        self.assertIn("markerMapping", script)
+        self.assertIn("第 \" + (index + 1) + \" 张图片 → [[image:", script)
+        self.assertIn("[[image:", script)
         self.assertIn("如果我在这条消息中附上了图片", script)
         self.assertIn("如果这条消息没有附图", script)
-        self.assertIn('"第 " + (index + 1) + " 张图片 → [[image:"', script)
-        self.assertIn("markerMapping", script)
-        self.assertIn("不要输出标题", script)
-        self.assertIn("不要使用代码块", script)
         self.assertIn("优先使用全部图片", script)
         self.assertIn("不要为了平均分布图片而机械插入", script)
         self.assertIn("不要仅根据图片文件名猜测图片内容", script)
-        self.assertIn("只能使用以下 Alarkive Publisher 图片占位符", script)
-        self.assertNotIn("const imageOrder", script)
+        self.assertIn("不要输出标题", script)
+        self.assertIn("不要使用代码块", script)
+
+        xiaohongshu_start = script.index("function buildXiaohongshuPrompt()")
+        baijiahao_start = script.index("function buildBaijiahaoPrompt()")
+        wechat_start = script.index("function buildWechatPrompt()")
+        xiaohongshu_prompt = script[xiaohongshu_start:baijiahao_start]
+        baijiahao_prompt = script[baijiahao_start:wechat_start]
+        wechat_prompt = script[wechat_start:script.index("function fallbackCopy(")]
+
+        for text in (
+            "符合小红书的阅读习惯和注意力机制",
+            "开头尽快进入主题",
+            "段落尽量短",
+            "像一个真正了解这件事的人在和读者分享",
+            "不要输出任何图片占位符",
+            "直接复制并粘贴进 Alarkive Publisher",
+        ):
+            self.assertIn(text, xiaohongshu_prompt)
+        self.assertNotIn("[[image:", xiaohongshu_prompt)
+
+        for text in (
+            "微信公众号小绿书正文",
+            "内容尽可能简洁、直观",
+            "符合微信图文的阅读习惯",
+            "不需要刻意追求小红书式的强情绪",
+            "不要输出任何图片占位符",
+            "直接复制并粘贴进 Alarkive Publisher",
+        ):
+            self.assertIn(text, wechat_prompt)
+        self.assertNotIn("[[image:", wechat_prompt)
+
+        self.assertIn("function buildBaijiahaoPrompt()", baijiahao_prompt)
+        self.assertIn("markerList", baijiahao_prompt)
+        self.assertIn("markerMapping", baijiahao_prompt)
+        self.assertNotIn("[[image:4]]", baijiahao_prompt)
+        self.assertIn("如果我在这条消息中附上了图片", script)
+        self.assertIn("如果这条消息没有附图", script)
         self.assertIn("navigator.clipboard.writeText", script)
+        self.assertIn("document.execCommand(\"copy\")", script)
         self.assertIn("复制失败，请手动复制下方 Prompt", script)
+        self.assertIn("requiresImages && !selectedFiles.length", script)
+        self.assertIn("✓ 小红书 Prompt 已复制", script)
+        self.assertIn("✓ 百家号 Prompt 已复制", script)
+        self.assertIn("✓ 小绿书 Prompt 已复制", script)
         self.assertIn("被重复引用", script)
         self.assertIn("未使用：图片", script)
 

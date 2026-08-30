@@ -40,8 +40,13 @@
                 <legend>小红书</legend>
                 <label class="field-label" for="xiaohongshu_title">标题 <span>*</span></label>
                 <input class="text-input" id="xiaohongshu_title" name="xiaohongshu_title" type="text" value="{{ form.get('xiaohongshu_title', '') }}" required>
-                <label class="field-label" for="xiaohongshu_body">正文 <span>*</span></label>
+                <div class="field-label-row">
+                    <label class="field-label" for="xiaohongshu_body">正文 <span>*</span></label>
+                    <button class="button button-secondary prompt-button" id="copy-xiaohongshu-prompt" type="button">复制小红书 Prompt</button>
+                </div>
                 <textarea class="body-input" id="xiaohongshu_body" name="xiaohongshu_body" rows="12" required placeholder="原样输入 Markdown、Emoji 和换行内容">{{ form.get('xiaohongshu_body', '') }}</textarea>
+                <p class="prompt-status" id="xiaohongshu-prompt-status" aria-live="polite"></p>
+                <textarea class="prompt-fallback" id="xiaohongshu-prompt-fallback" rows="8" readonly hidden aria-label="小红书 Prompt 手动复制区域"></textarea>
             </fieldset>
 
             <fieldset class="platform-card">
@@ -50,20 +55,25 @@
                 <input class="text-input" id="baijiahao_title" name="baijiahao_title" type="text" value="{{ form.get('baijiahao_title', '') }}" required>
                 <div class="field-label-row">
                     <label class="field-label" for="baijiahao_body">正文 <span>*</span></label>
-                    <button class="button button-secondary prompt-button" id="copy-ai-prompt" type="button">复制 AI 生成 Prompt</button>
+                    <button class="button button-secondary prompt-button" id="copy-baijiahao-prompt" type="button">复制百家号 Prompt</button>
                 </div>
                 <textarea class="body-input" id="baijiahao_body" name="baijiahao_body" rows="12" required placeholder="原样输入 Markdown、Emoji 和换行内容">{{ form.get('baijiahao_body', '') }}</textarea>
                 <p class="marker-status" id="baijiahao-marker-status" aria-live="polite"></p>
-                <p class="prompt-status" id="prompt-status" aria-live="polite"></p>
-                <textarea class="prompt-fallback" id="ai-prompt-fallback" rows="8" readonly hidden aria-label="AI 生成 Prompt 手动复制区域"></textarea>
+                <p class="prompt-status" id="baijiahao-prompt-status" aria-live="polite"></p>
+                <textarea class="prompt-fallback" id="baijiahao-prompt-fallback" rows="8" readonly hidden aria-label="百家号 Prompt 手动复制区域"></textarea>
             </fieldset>
 
             <fieldset class="platform-card">
                 <legend>微信公众号</legend>
                 <label class="field-label" for="wechat_title">标题 <span>*</span></label>
                 <input class="text-input" id="wechat_title" name="wechat_title" type="text" value="{{ form.get('wechat_title', '') }}" required>
-                <label class="field-label" for="wechat_body">正文 <span>*</span></label>
+                <div class="field-label-row">
+                    <label class="field-label" for="wechat_body">正文 <span>*</span></label>
+                    <button class="button button-secondary prompt-button" id="copy-wechat-prompt" type="button">复制小绿书 Prompt</button>
+                </div>
                 <textarea class="body-input" id="wechat_body" name="wechat_body" rows="12" required placeholder="原样输入 Markdown、Emoji 和换行内容">{{ form.get('wechat_body', '') }}</textarea>
+                <p class="prompt-status" id="wechat-prompt-status" aria-live="polite"></p>
+                <textarea class="prompt-fallback" id="wechat-prompt-fallback" rows="8" readonly hidden aria-label="小绿书 Prompt 手动复制区域"></textarea>
             </fieldset>
         </div>
     </section>
