@@ -4,11 +4,12 @@ import logging
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, cast
 
 from ..content import PostContent, load_post
 from ..workflow_controller import WebWorkflowController
 from .publish_state import (
+    PLATFORMS,
     initialize_workflow,
     load_publish_state,
     mark_interrupted,
@@ -36,7 +37,14 @@ class PublisherAlreadyPublishedError(PublishManagerError):
     """The local marker must be reset before starting another workflow."""
 
 
+class PublisherUnsupportedPlatformError(PublishManagerError):
+    """A single-platform workflow was requested for an unknown platform."""
+
+
 WorkflowRunner = Callable[[PostContent, Path, WebWorkflowController], None]
+PlatformWorkflowRunner = Callable[
+    [PostContent, Path, str, WebWorkflowController], None
+]
 
 
 @dataclass
@@ -45,6 +53,8 @@ class _ActiveJob:
     post_folder: Path
     post: PostContent
     controller: WebWorkflowController
+    workflow_mode: str = "all"
+    target_platform: str | None = None
     thread: threading.Thread | None = None
     playwright: object | None = None
     context: object | None = None
@@ -61,6 +71,7 @@ class PublishManager:
         *,
         project_root: Path | str | None = None,
         workflow_runner: WorkflowRunner | None = None,
+        platform_workflow_runner: PlatformWorkflowRunner | None = None,
     ) -> None:
         self.posts_root = Path(posts_root).expanduser().resolve() if posts_root else POSTS_DIR
         self.project_root = (
@@ -69,6 +80,7 @@ class PublishManager:
             else self.posts_root.parent
         )
         self._workflow_runner = workflow_runner
+        self._platform_workflow_runner = platform_workflow_runner
         self._lock = threading.RLock()
         self._active_job: _ActiveJob | None = None
         self._reconcile_interrupted_workflows()
@@ -105,6 +117,47 @@ class PublishManager:
             return self._active_job.post_id if self._active_job else None
 
     def start_publish(self, post_id: str) -> dict:
+        """Start the established all-platform workflow."""
+
+        return self._start_workflow(
+            post_id,
+            workflow_mode="all",
+            mark_local_published=True,
+        )
+
+    def start_publish_all(self, post_id: str) -> dict:
+        """Explicit name for the established all-platform workflow."""
+
+        return self.start_publish(post_id)
+
+    def start_platform_publish(self, post_id: str, platform: str) -> dict:
+        """Start a non-blocking workflow for exactly one supported platform."""
+
+        if platform not in PLATFORMS:
+            supported = "、".join(PLATFORMS)
+            raise PublisherUnsupportedPlatformError(
+                f"不支持的平台：{platform}。可选平台：{supported}。"
+            )
+        return self._start_workflow(
+            post_id,
+            workflow_mode="single",
+            target_platform=platform,
+            mark_local_published=False,
+        )
+
+    def start_publish_platform(self, post_id: str, platform: str) -> dict:
+        """Compatibility spelling for callers using ``start_publish_platform``."""
+
+        return self.start_platform_publish(post_id, platform)
+
+    def _start_workflow(
+        self,
+        post_id: str,
+        *,
+        workflow_mode: str,
+        target_platform: str | None = None,
+        mark_local_published: bool,
+    ) -> dict:
         """Mark the local state immediately and start a non-blocking worker."""
 
         post_folder = get_post_folder(post_id, self.posts_root)
@@ -115,7 +168,7 @@ class PublishManager:
             # Validate the immutable Package before changing the local marker.
             post = load_post(post_folder)
             current = load_publish_state(post_folder)
-            if current["published"]:
+            if mark_local_published and current["published"]:
                 raise PublisherAlreadyPublishedError(
                     "该任务已经标记为已发布，请先重新置为未发布。"
                 )
@@ -126,13 +179,25 @@ class PublishManager:
                 post_folder=post_folder,
                 post=post,
                 controller=controller,
+                workflow_mode=workflow_mode,
+                target_platform=target_platform,
             )
             # Register before writing the running state so a simultaneous read
             # can never mistake a just-starting job for a stale server restart.
             self._active_job = job
             try:
-                mark_published(post_folder)
-                initialize_workflow(post_folder)
+                if mark_local_published:
+                    mark_published(post_folder)
+                if workflow_mode == "all":
+                    # Keep the established all-platform initialization call
+                    # and path exactly as it was before v0.1.7.
+                    initialize_workflow(post_folder)
+                else:
+                    initialize_workflow(
+                        post_folder,
+                        workflow_mode=workflow_mode,
+                        target_platform=target_platform,
+                    )
                 thread = threading.Thread(
                     target=self._run_job,
                     args=(job,),
@@ -148,11 +213,22 @@ class PublishManager:
         return load_publish_state(post_folder)
 
     def _run_job(self, job: _ActiveJob) -> None:
-        runner = self._workflow_runner
-        if runner is None:
-            from ..workflow import run_publisher_workflow
+        # The default runner selection is mode-specific.  A supplied legacy
+        # ``workflow_runner`` remains a three-argument test/integration hook;
+        # callers may supply a four-argument platform runner when they need to
+        # observe or replace only the new single-platform path.
+        default_runner = self._workflow_runner is None and (
+            job.workflow_mode == "all" or self._platform_workflow_runner is None
+        )
+        runner: Callable[..., None]
+        if default_runner:
+            from ..workflow import run_publisher_workflow, run_single_platform_workflow
 
-            runner = run_publisher_workflow
+            runner = (
+                cast(Callable[..., None], run_publisher_workflow)
+                if job.workflow_mode == "all"
+                else cast(Callable[..., None], run_single_platform_workflow)
+            )
 
             def remember_browser(playwright, context, page) -> None:
                 del page
@@ -164,16 +240,38 @@ class PublishManager:
                     lambda: self._context_is_open(context),
                     lambda: self._mark_browser_closed(job),
                 )
+        elif job.workflow_mode == "single" and self._platform_workflow_runner is not None:
+            runner = cast(Callable[..., None], self._platform_workflow_runner)
+        else:
+            runner = cast(Callable[..., None], self._workflow_runner)
 
         try:
-            if self._workflow_runner is None:
-                runner(  # type: ignore[call-arg]
+            if default_runner:
+                if job.workflow_mode == "all":
+                    runner(
+                        job.post,
+                        self.project_root,
+                        job.controller,
+                        on_browser_started=remember_browser,
+                    )
+                else:
+                    runner(
+                        job.post,
+                        self.project_root,
+                        job.target_platform,
+                        job.controller,
+                        on_browser_started=remember_browser,
+                    )
+            elif job.workflow_mode == "single" and self._platform_workflow_runner is not None:
+                runner(
                     job.post,
                     self.project_root,
+                    job.target_platform,
                     job.controller,
-                    on_browser_started=remember_browser,
                 )
             else:
+                # Preserve the existing injectable three-argument runner used
+                # by the all-platform workflow and its tests.
                 runner(job.post, self.project_root, job.controller)
         except BaseException as exc:
             try:

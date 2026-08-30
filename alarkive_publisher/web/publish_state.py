@@ -15,6 +15,7 @@ STATE_FILENAME = "publish-state.json"
 WORKFLOW_STATUSES = {"idle", "running", "waiting", "completed", "failed", "interrupted"}
 PLATFORM_STATUSES = {"pending", "running", "waiting", "ready", "failed"}
 PLATFORMS = ("xiaohongshu", "baijiahao", "wechat")
+WORKFLOW_MODES = {"all", "single"}
 
 _UNSET = object()
 _STATE_LOCK = threading.RLock()
@@ -37,6 +38,8 @@ def default_publish_state() -> dict[str, Any]:
         "published_at": None,
         "workflow": {
             "status": "idle",
+            "workflow_mode": "all",
+            "target_platform": None,
             "current_platform": None,
             "current_step": None,
             "message": None,
@@ -69,6 +72,20 @@ def _validate_state(state: Any) -> dict[str, Any]:
     workflow = state.get("workflow")
     if not isinstance(workflow, dict) or workflow.get("status") not in WORKFLOW_STATUSES:
         raise PublishStateError("publish-state.json 的 workflow 无效。")
+    # v0.1.7 adds optional workflow metadata.  Old sidecars without these
+    # fields continue to mean the original all-platform workflow.  Do not
+    # inject the defaults here: local-marker updates must preserve an old
+    # workflow object exactly.
+    workflow_mode = workflow.get("workflow_mode", "all")
+    if workflow_mode not in WORKFLOW_MODES:
+        raise PublishStateError("publish-state.json 的 workflow_mode 无效。")
+    target_platform = workflow.get("target_platform")
+    if target_platform is not None and target_platform not in PLATFORMS:
+        raise PublishStateError("publish-state.json 的 target_platform 无效。")
+    if workflow_mode == "single" and target_platform is None:
+        raise PublishStateError("单平台 workflow 必须指定 target_platform。")
+    if workflow_mode == "all" and target_platform is not None:
+        raise PublishStateError("完整 workflow 不应指定 target_platform。")
     platforms = workflow.get("platforms")
     if not isinstance(platforms, dict):
         raise PublishStateError("publish-state.json 的 workflow.platforms 无效。")
@@ -176,14 +193,30 @@ def mark_unpublished(post_folder: Path | str) -> dict[str, Any]:
     return update_publish_state(post_folder, update)
 
 
-def initialize_workflow(post_folder: Path | str) -> dict[str, Any]:
+def initialize_workflow(
+    post_folder: Path | str,
+    *,
+    workflow_mode: str = "all",
+    target_platform: str | None = None,
+) -> dict[str, Any]:
     """Reset only workflow progress for a newly started publish preparation."""
+
+    if workflow_mode not in WORKFLOW_MODES:
+        raise PublishStateError(f"不支持的 workflow_mode：{workflow_mode}")
+    if target_platform is not None and target_platform not in PLATFORMS:
+        raise PublishStateError(f"不支持的平台：{target_platform}")
+    if workflow_mode == "single" and target_platform is None:
+        raise PublishStateError("单平台 workflow 必须指定 target_platform。")
+    if workflow_mode == "all" and target_platform is not None:
+        raise PublishStateError("完整 workflow 不应指定 target_platform。")
 
     fresh_workflow = default_publish_state()["workflow"]
 
     def update(state: dict[str, Any]) -> None:
         state["workflow"] = copy.deepcopy(fresh_workflow)
         state["workflow"]["status"] = "running"
+        state["workflow"]["workflow_mode"] = workflow_mode
+        state["workflow"]["target_platform"] = target_platform
         state["workflow"]["message"] = "正在启动发布准备流程"
         state["workflow"]["updated_at"] = _now()
 

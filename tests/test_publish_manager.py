@@ -13,9 +13,11 @@ from alarkive_publisher.web.publish_manager import (
     PublishManager,
     PublisherBusyError,
     PublisherNotWaitingError,
+    PublisherUnsupportedPlatformError,
 )
 from alarkive_publisher.web.publish_state import (
     load_publish_state,
+    mark_published,
     mark_unpublished,
 )
 from alarkive_publisher.web.storage import ImageData, save_post
@@ -73,6 +75,169 @@ class PublishManagerTests(unittest.TestCase):
             state = manager.get_publish_state(package.name)
             self.assertTrue(state["published"])
             self.assertEqual(state["workflow"]["status"], "completed")
+
+    def test_single_platform_workflow_only_targets_one_platform(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = self._make_post(root)
+            calls: list[str] = []
+
+            def fake_platform_runner(post, project_root, platform, controller):
+                del post, project_root
+                calls.append(platform)
+                controller.ready(platform, f"{platform} ready", "结束")
+                controller.completed("完成")
+
+            manager = PublishManager(root, platform_workflow_runner=fake_platform_runner)
+            manager.start_platform_publish(package.name, "baijiahao")
+            wait_for(
+                lambda: manager.get_publish_state(package.name)["workflow"]["status"]
+                == "waiting"
+            )
+
+            state = manager.get_publish_state(package.name)
+            self.assertEqual(calls, ["baijiahao"])
+            self.assertFalse(state["published"])
+            self.assertEqual(state["workflow"]["workflow_mode"], "single")
+            self.assertEqual(state["workflow"]["target_platform"], "baijiahao")
+            self.assertEqual(
+                [
+                    state["workflow"]["platforms"][platform]["status"]
+                    for platform in PLATFORMS
+                ],
+                ["pending", "ready", "pending"],
+            )
+            self.assertTrue(manager.has_active_workflow())
+            with self.assertRaises(PublisherBusyError):
+                manager.start_publish(package.name)
+            with self.assertRaises(PublisherBusyError):
+                manager.start_platform_publish(package.name, "wechat")
+
+            manager.continue_publish(package.name)
+            wait_for(lambda: not manager.has_active_workflow())
+            self.assertEqual(
+                manager.get_publish_state(package.name)["workflow"]["status"],
+                "completed",
+            )
+            self.assertFalse(manager.get_publish_state(package.name)["published"])
+
+    def test_single_platform_does_not_require_or_change_full_publish_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = self._make_post(root)
+            mark_published(package)
+
+            def fake_platform_runner(post, project_root, platform, controller):
+                del post, project_root
+                controller.completed(f"{platform} 完成")
+
+            manager = PublishManager(root, platform_workflow_runner=fake_platform_runner)
+            manager.start_platform_publish(package.name, "xiaohongshu")
+            wait_for(lambda: not manager.has_active_workflow())
+
+            state = manager.get_publish_state(package.name)
+            self.assertTrue(state["published"])
+            self.assertIsNotNone(state["published_at"])
+
+    def test_single_platform_rejects_unknown_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = self._make_post(root)
+            manager = PublishManager(root, workflow_runner=lambda *args: None)
+
+            with self.assertRaises(PublisherUnsupportedPlatformError):
+                manager.start_platform_publish(package.name, "unknown")
+            self.assertFalse(manager.has_active_workflow())
+            self.assertFalse(manager.get_publish_state(package.name)["published"])
+
+    def test_single_platform_failure_marks_only_target_and_releases_job(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = self._make_post(root)
+
+            def fake_platform_runner(post, project_root, platform, controller):
+                del post, project_root
+                controller.step(platform, "uploading_images", "上传图片")
+                raise RuntimeError("百家号准备失败")
+
+            manager = PublishManager(root, platform_workflow_runner=fake_platform_runner)
+            manager.start_platform_publish(package.name, "baijiahao")
+            wait_for(
+                lambda: manager.get_publish_state(package.name)["workflow"]["status"]
+                == "failed"
+            )
+            wait_for(lambda: not manager.has_active_workflow())
+
+            state = manager.get_publish_state(package.name)
+            self.assertFalse(state["published"])
+            self.assertEqual(state["workflow"]["platforms"]["baijiahao"]["status"], "failed")
+            self.assertEqual(state["workflow"]["platforms"]["xiaohongshu"]["status"], "pending")
+            self.assertEqual(state["workflow"]["platforms"]["wechat"]["status"], "pending")
+            self.assertEqual(state["workflow"]["error"]["message"], "百家号准备失败")
+
+    def test_single_platform_manual_browser_close_releases_job(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = self._make_post(root)
+
+            class FakePage:
+                def __init__(self) -> None:
+                    self.closed = False
+
+                def is_closed(self) -> bool:
+                    return self.closed
+
+            class FakeContext:
+                def __init__(self, page) -> None:
+                    self.pages = [page]
+                    self.close_calls = 0
+
+                def close(self) -> None:
+                    self.close_calls += 1
+
+            class FakePlaywright:
+                def __init__(self) -> None:
+                    self.stop_calls = 0
+
+                def stop(self) -> None:
+                    self.stop_calls += 1
+
+            page = FakePage()
+            context = FakeContext(page)
+            playwright = FakePlaywright()
+
+            def fake_single_workflow(
+                post,
+                project_root,
+                platform,
+                controller,
+                *,
+                on_browser_started,
+            ):
+                del post, project_root
+                on_browser_started(playwright, context, page)
+                controller.wait_for_user(platform, "ready", "检查", "结束")
+
+            manager = PublishManager(root)
+            with patch(
+                "alarkive_publisher.workflow.run_single_platform_workflow",
+                fake_single_workflow,
+            ):
+                manager.start_platform_publish(package.name, "wechat")
+                wait_for(
+                    lambda: manager.get_publish_state(package.name)["workflow"]["status"]
+                    == "waiting"
+                )
+                page.closed = True
+                wait_for(
+                    lambda: manager.get_publish_state(package.name)["workflow"]["status"]
+                    == "failed"
+                )
+                wait_for(lambda: not manager.has_active_workflow())
+
+            self.assertFalse(manager.browser_open_for(package.name))
+            self.assertEqual(context.close_calls, 0)
+            self.assertEqual(playwright.stop_calls, 1)
 
     def test_only_one_task_can_own_the_publisher(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

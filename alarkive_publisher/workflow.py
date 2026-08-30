@@ -11,6 +11,7 @@ from .xiaohongshu import PublisherError, run_xiaohongshu, start_browser
 
 
 BrowserStarted = Callable[[object, object, object], None]
+SINGLE_PLATFORM_TARGETS = ("xiaohongshu", "baijiahao", "wechat")
 
 
 def run_publisher_workflow(
@@ -85,4 +86,75 @@ def run_publisher_workflow(
         raise
 
 
-__all__ = ["run_publisher_workflow", "PublisherError"]
+def run_single_platform_workflow(
+    post: PostContent,
+    project_root: Path,
+    platform: str,
+    controller: WorkflowController,
+    *,
+    on_browser_started: BrowserStarted | None = None,
+) -> None:
+    """Prepare exactly one platform in its own shared-browser session.
+
+    This is intentionally a sibling of ``run_publisher_workflow``.  The
+    established all-platform orchestration above remains unchanged; this
+    entry point only reuses the existing platform runners for targeted runs.
+    """
+
+    if platform not in SINGLE_PLATFORM_TARGETS:
+        raise ValueError(
+            f"Unsupported single-platform workflow target: {platform!r}. "
+            f"Expected one of {', '.join(SINGLE_PLATFORM_TARGETS)}."
+        )
+
+    playwright = None
+    context = None
+    page = None
+    current_step = "Starting browser"
+
+    try:
+        controller.system_step("starting_browser", "正在启动共享浏览器")
+        playwright, context, page = start_browser(project_root)
+        if on_browser_started is not None:
+            on_browser_started(playwright, context, page)
+
+        controller.start_platform(platform)
+        current_step = f"Preparing {platform}"
+        if platform == "xiaohongshu":
+            run_xiaohongshu(page, post, controller)
+            ready_message = "小红书已准备完成"
+        elif platform == "baijiahao":
+            run_baijiahao(page, post, controller)
+            ready_message = "百家号已准备完成"
+        else:
+            page = run_wechat(page, post, controller)
+            ready_message = "微信公众号已准备完成"
+
+        controller.ready(
+            platform,
+            ready_message,
+            "检查完成后点击结束流程并关闭浏览器。",
+        )
+
+        current_step = "Closing browser"
+        if context is not None:
+            context.close()
+        if playwright is not None:
+            playwright.stop()
+        controller.completed(f"{ready_message}。单平台发布准备流程已完成。")
+    except BaseException as exc:
+        error_step = getattr(exc, "step", current_step)
+        try:
+            controller.failed(platform, error_step, exc)
+        except Exception:
+            # Preserve the original exception if persisting failure state also
+            # fails, matching the established all-platform workflow behavior.
+            pass
+        raise
+
+
+__all__ = [
+    "run_publisher_workflow",
+    "run_single_platform_workflow",
+    "PublisherError",
+]

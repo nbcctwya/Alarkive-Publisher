@@ -18,6 +18,7 @@ from .publish_manager import (
     PublisherBusyError,
     PublishManagerError,
     PublisherNotWaitingError,
+    PublisherUnsupportedPlatformError,
 )
 from .publish_state import PublishStateError, mark_unpublished
 from .storage import (
@@ -333,6 +334,31 @@ async def close_publish_browser(request: Request, post_id: str) -> Response:
         publish_manager.close_browser(post_id)
     except (PublishManagerError, StorageError, PublishStateError) as exc:
         return _render_detail_error(request, post_id, str(exc))
+    return RedirectResponse(url=f"/posts/{post_id}", status_code=303)
+
+
+@app.post("/posts/{post_id}/publish/{platform}", name="publish_platform")
+async def publish_platform(request: Request, post_id: str, platform: str) -> Response:
+    """Start a single-platform preparation without changing the all route."""
+
+    try:
+        publish_manager.start_platform_publish(post_id, platform)
+    except PublisherUnsupportedPlatformError as exc:
+        return _render_detail_error(request, post_id, str(exc), status_code=400)
+    except PublisherBusyError as exc:
+        return _render_detail_error(request, post_id, str(exc))
+    except PublisherAlreadyPublishedError as exc:
+        return _render_detail_error(request, post_id, str(exc))
+    except (StorageError, ContentError, PublishStateError) as exc:
+        return _render_detail_error(request, post_id, str(exc), status_code=400)
+    except Exception:
+        LOGGER.exception("启动单平台发布准备流程失败：%s/%s", post_id, platform)
+        return _render_detail_error(
+            request,
+            post_id,
+            "无法启动单平台发布准备流程，请检查终端日志。",
+            status_code=500,
+        )
     return RedirectResponse(url=f"/posts/{post_id}", status_code=303)
 
 

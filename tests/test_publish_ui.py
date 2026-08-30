@@ -11,10 +11,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import UploadFile
+from fastapi.responses import Response
 
 from alarkive_publisher.web import app as web_app
-from alarkive_publisher.web.publish_manager import PublishManager
-from alarkive_publisher.web.publish_state import mark_unpublished
+from alarkive_publisher.web.publish_manager import (
+    PublishManager,
+    PublisherUnsupportedPlatformError,
+)
+from alarkive_publisher.web.publish_state import default_publish_state, mark_unpublished
 from alarkive_publisher.web.storage import ImageData, get_post_detail, save_post
 
 
@@ -118,6 +122,113 @@ class PublishUiStateTests(unittest.TestCase):
         self.assertIn("✓ 小绿书 Prompt 已复制", script)
         self.assertIn("被重复引用", script)
         self.assertIn("未使用：图片", script)
+
+    def _detail_context(self, root: Path) -> tuple[Path, dict]:
+        package = save_post(
+            "测试任务",
+            {platform: "标题" for platform in PLATFORMS},
+            {platform: "正文" for platform in PLATFORMS},
+            [ImageData("image.png", PNG)],
+            posts_root=root,
+        ).directory
+        post = get_post_detail(package.name, root)
+        post["publish_state"] = default_publish_state()
+        post["browser_open"] = False
+        post["publisher_active"] = False
+        return package, post
+
+    def test_detail_shows_independent_publish_actions_and_renamed_all_action(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            _, post = self._detail_context(Path(temp))
+            rendered = web_app.templates.get_template("detail.html").render(
+                request=_TemplateRequest(), post=post
+            )
+
+        for label in ("发布小红书", "发布百家号", "发布小绿书", "发布全部"):
+            self.assertIn(label, rendered)
+        self.assertNotIn(">发布</button>", rendered)
+        self.assertLess(rendered.index("发布全部"), rendered.index("平台内容"))
+        self.assertGreater(rendered.index("发布小红书"), rendered.index("平台内容"))
+
+    def test_detail_hides_new_actions_while_publisher_is_active(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            _, post = self._detail_context(Path(temp))
+            post["publisher_active"] = True
+            post["publish_state"]["published"] = True
+            post["publish_state"]["workflow"]["status"] = "waiting"
+            post["publish_state"]["workflow"]["current_platform"] = "baijiahao"
+            post["publish_state"]["workflow"]["current_step"] = "uploading_images"
+            rendered = web_app.templates.get_template("detail.html").render(
+                request=_TemplateRequest(), post=post
+            )
+
+        self.assertIn("发布流程进行中", rendered)
+        for label in ("发布小红书", "发布百家号", "发布小绿书", "发布全部"):
+            self.assertNotIn(label, rendered)
+
+    def test_single_platform_actions_remain_available_when_full_marker_is_set(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            _, post = self._detail_context(Path(temp))
+            post["publish_state"]["published"] = True
+            rendered = web_app.templates.get_template("detail.html").render(
+                request=_TemplateRequest(), post=post
+            )
+
+        for label in ("发布小红书", "发布百家号", "发布小绿书"):
+            self.assertIn(label, rendered)
+        self.assertIn("重新置为未发布", rendered)
+        self.assertNotIn("发布全部", rendered)
+
+    def test_single_ready_detail_uses_end_browser_action(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            _, post = self._detail_context(Path(temp))
+            post["publisher_active"] = True
+            post["browser_open"] = True
+            post["publish_state"]["published"] = True
+            workflow = post["publish_state"]["workflow"]
+            workflow["workflow_mode"] = "single"
+            workflow["target_platform"] = "baijiahao"
+            workflow["status"] = "waiting"
+            workflow["current_platform"] = "baijiahao"
+            workflow["current_step"] = "ready"
+            workflow["platforms"]["baijiahao"]["status"] = "ready"
+            rendered = web_app.templates.get_template("detail.html").render(
+                request=_TemplateRequest(), post=post
+            )
+
+        self.assertIn("单平台：百家号", rendered)
+        self.assertIn("结束流程并关闭浏览器", rendered)
+        self.assertNotIn("继续到微信公众号", rendered)
+
+    def test_single_platform_route_passes_target_to_manager(self) -> None:
+        with patch.object(web_app.publish_manager, "start_platform_publish") as start:
+            response = asyncio.run(
+                web_app.publish_platform(None, "post-id", "xiaohongshu")  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/posts/post-id")
+        start.assert_called_once_with("post-id", "xiaohongshu")
+
+    def test_single_platform_route_rejects_unknown_target(self) -> None:
+        error_response = Response(status_code=400)
+        with patch.object(
+            web_app.publish_manager,
+            "start_platform_publish",
+            side_effect=PublisherUnsupportedPlatformError("不支持的平台：unknown"),
+        ), patch.object(
+            web_app,
+            "_render_detail_error",
+            return_value=error_response,
+        ) as render_error:
+            response = asyncio.run(
+                web_app.publish_platform(None, "post-id", "unknown")  # type: ignore[arg-type]
+            )
+
+        self.assertIs(response, error_response)
+        render_error.assert_called_once_with(
+            None, "post-id", "不支持的平台：unknown", status_code=400
+        )
 
     def test_mixed_upload_filters_unsupported_files(self) -> None:
         captured: dict = {}

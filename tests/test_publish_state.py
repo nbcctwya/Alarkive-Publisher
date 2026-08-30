@@ -8,6 +8,7 @@ from pathlib import Path
 
 from alarkive_publisher.web.publish_state import (
     default_publish_state,
+    initialize_workflow,
     load_publish_state,
     mark_published,
     mark_unpublished,
@@ -78,3 +79,33 @@ class PublishStateTests(unittest.TestCase):
 
             self.assertEqual(parsed, load_publish_state(folder))
             self.assertEqual(parsed["schema_version"], "0.1")
+
+    def test_single_workflow_metadata_is_lightweight_and_schema_stays_0_1(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            state = initialize_workflow(
+                folder,
+                workflow_mode="single",
+                target_platform="baijiahao",
+            )
+
+            self.assertEqual(state["schema_version"], "0.1")
+            self.assertEqual(state["workflow"]["workflow_mode"], "single")
+            self.assertEqual(state["workflow"]["target_platform"], "baijiahao")
+            self.assertEqual(state["workflow"]["platforms"]["xiaohongshu"]["status"], "pending")
+            self.assertEqual(state["workflow"]["platforms"]["wechat"]["status"], "pending")
+
+    def test_legacy_sidecar_without_workflow_metadata_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            legacy = default_publish_state()
+            legacy["workflow"].pop("workflow_mode")
+            legacy["workflow"].pop("target_platform")
+            (folder / "publish-state.json").write_text(
+                json.dumps(legacy, ensure_ascii=False), encoding="utf-8"
+            )
+
+            state = load_publish_state(folder)
+
+            self.assertNotIn("workflow_mode", state["workflow"])
+            self.assertNotIn("target_platform", state["workflow"])

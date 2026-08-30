@@ -447,6 +447,12 @@
     const workflowError = document.getElementById("workflow-error");
     const workflowContinue = document.getElementById("workflow-continue");
     const actions = document.getElementById("publish-actions");
+    const platformActionContainers = document.querySelectorAll("[data-platform-action]");
+    const platformActionLabels = {
+        xiaohongshu: "发布小红书",
+        baijiahao: "发布百家号",
+        wechat: "发布小绿书"
+    };
 
     function createForm(url, text, confirmText) {
         const form = document.createElement("form");
@@ -490,21 +496,49 @@
             );
             form.querySelector("button").className = "button button-secondary";
             actions.appendChild(form);
-        } else if (publisherActive) {
+        }
+
+        if (publisherActive) {
             const notice = document.createElement("span");
             notice.className = "workflow-action-note";
             notice.textContent = "发布流程进行中";
             actions.appendChild(notice);
-        } else {
-            actions.appendChild(createForm(
+        } else if (!state.published) {
+            const allForm = createForm(
                 panel.dataset.publishUrl,
-                "发布",
-                "开始发布准备流程？\n\nAlarkive 会自动填写三个平台，但不会点击平台真正的发布按钮。"
-            ));
+                "发布全部",
+                "开始发布全部平台的准备流程？\n\nAlarkive 会自动填写三个平台，但不会点击平台真正的发布按钮。"
+            );
+            allForm.querySelector("button").className = "button button-secondary";
+            actions.appendChild(allForm);
         }
         if (failedBrowserOpen) {
             actions.appendChild(createForm(panel.dataset.closeUrl, "关闭浏览器"));
         }
+    }
+
+    function renderPlatformActions(state) {
+        const publisherActive = state.publisher_active === true;
+        platformActionContainers.forEach((container) => {
+            const platform = container.dataset.platformAction;
+            container.replaceChildren();
+            if (publisherActive) {
+                const notice = document.createElement("span");
+                notice.className = "workflow-action-note";
+                notice.textContent = "发布流程进行中";
+                container.appendChild(notice);
+                return;
+            }
+
+            const label = platformActionLabels[platform];
+            if (!label) return;
+            const form = createForm(
+                container.dataset.publishUrl,
+                label,
+                "开始准备" + (platform === "wechat" ? "小绿书" : labels[platform]) + "内容？\n\nAlarkive 不会点击平台真正的发布按钮。"
+            );
+            container.appendChild(form);
+        });
     }
 
     function renderContinue(state) {
@@ -524,7 +558,10 @@
         let text = "继续";
         if (workflow.current_platform === "xiaohongshu") text = "继续到百家号";
         if (workflow.current_platform === "baijiahao") text = "继续到微信公众号";
-        if (workflow.current_platform === "wechat" && workflow.current_step === "ready") {
+        if (
+            workflow.current_step === "ready" &&
+            (workflow.workflow_mode === "single" || workflow.current_platform === "wechat")
+        ) {
             text = "结束流程并关闭浏览器";
         }
         workflowContinue.appendChild(createForm(panel.dataset.continueUrl, text));
@@ -551,6 +588,7 @@
             element.dataset.status = platformState.status || "pending";
         });
         renderActions(state);
+        renderPlatformActions(state);
         renderContinue(state);
     }
 

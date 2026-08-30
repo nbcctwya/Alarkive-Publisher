@@ -240,6 +240,7 @@ code { padding: 2px 5px; border-radius: 4px; color: #475569; background: #e2e8f0
 .detail-platform h3 { margin-bottom: 18px; color: var(--accent); }
 .detail-platform h4 { overflow-wrap: anywhere; }
 .detail-platform pre { min-height: 220px; margin: 0; padding: 14px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 7px; color: #334155; background: var(--surface-soft); font: 13px/1.7 Consolas, "Microsoft YaHei", monospace; }
+.platform-publish-action { display: flex; justify-content: flex-end; min-height: 40px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 
 @media (max-width: 900px) {
     .platform-fields, .detail-platforms, .workflow-platforms { grid-template-columns: 1fr; }
@@ -251,4 +252,5 @@ code { padding: 2px 5px; border-radius: 4px; color: #475569; background: #e2e8f0
     .page-heading { align-items: flex-start; flex-direction: column; }
     .form-section, .detail-section { padding: 19px; }
     .publish-summary { align-items: stretch; flex-direction: column; }
+    .platform-publish-action { justify-content: flex-start; }
 }
