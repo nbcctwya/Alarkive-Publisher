@@ -113,6 +113,9 @@ $env:ALARKIVE_BROWSER_DATA_DIR = "D:\Alarkive\browser-data"
 
 ## 创建 Alarkive Package
 
+Alarkive Package v0.1 的正式格式规范见 [`PACKAGE_FORMAT.md`](PACKAGE_FORMAT.md)，其
+`manifest.json` 的机器可读 Schema 见 [`package.schema.json`](package.schema.json)。
+
 启动 Web Content Manager：
 
 ```powershell

@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "package.schema.json",
+  "title": "Alarkive Package v0.1 manifest",
+  "description": "The manifest.json format for an Alarkive Package v0.1.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "created_at",
+    "platforms"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "0.1",
+      "description": "The Alarkive Package schema version."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$",
+      "description": "ASCII package ID in YYYYMMDD-HHMMSS-xxxx form."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "[^\\s]",
+      "description": "Human-readable package name."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339/ISO 8601 creation time with a timezone offset or Z."
+    },
+    "platforms": {
+      "type": "object",
+      "required": [
+        "xiaohongshu",
+        "baijiahao",
+        "wechat"
+      ],
+      "properties": {
+        "xiaohongshu": {
+          "$ref": "#/$defs/platform"
+        },
+        "baijiahao": {
+          "$ref": "#/$defs/platform"
+        },
+        "wechat": {
+          "$ref": "#/$defs/platform"
+        }
+      },
+      "description": "Platform-specific content and ordered image references."
+    }
+  },
+  "$defs": {
+    "platform": {
+      "type": "object",
+      "required": [
+        "title",
+        "content_file",
+        "images"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "[^\\s]",
+          "description": "Platform title. Leading and trailing whitespace is removed by the Web writer."
+        },
+        "content_file": {
+          "type": "string",
+          "pattern": "^content/(?!\\.{1,2}(?:/|$))[^/\\\\]+(?:/(?!\\.{1,2}(?:/|$))[^/\\\\]+)*$",
+          "description": "Package-relative path to the platform's UTF-8 Markdown content."
+        },
+        "images": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "pattern": "^images/(?!\\.{1,2}(?:/|$))[^/\\\\]+(?:/(?!\\.{1,2}(?:/|$))[^/\\\\]+)*\\.[Pp][Nn][Gg]$"
+          },
+          "description": "Non-empty, ordered list of package-relative PNG paths."
+        }
+      },
+      "description": "Content metadata for one supported platform."
+    }
+  }
+}
