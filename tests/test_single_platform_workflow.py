@@ -142,7 +142,7 @@ class SinglePlatformWorkflowTests(unittest.TestCase):
         ):
             run_publisher_workflow(post, Path("."), controller)
 
-        self.assertEqual(calls, ["xiaohongshu", "baijiahao", "wechat"])
+        self.assertEqual(calls, ["baijiahao", "wechat"])
         self.assertEqual(context.close_calls, 1)
         self.assertEqual(playwright.stop_calls, 1)
 

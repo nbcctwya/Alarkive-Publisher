@@ -21,7 +21,7 @@ def run_publisher_workflow(
     *,
     on_browser_started: BrowserStarted | None = None,
 ) -> None:
-    """Run all three shared platform publishers in order.
+    """Run the shared Baijiahao and WeChat publishers in order.
 
     The workflow deliberately stops at each platform's ready-to-publish page.
     No function in this orchestration clicks a platform's final publish button.
@@ -38,16 +38,6 @@ def run_publisher_workflow(
         playwright, context, page = start_browser(project_root)
         if on_browser_started is not None:
             on_browser_started(playwright, context, page)
-
-        current_platform = "xiaohongshu"
-        current_step = "Preparing Xiaohongshu"
-        controller.start_platform(current_platform)
-        run_xiaohongshu(page, post, controller)
-        controller.ready(
-            current_platform,
-            "小红书已准备完成",
-            "检查完成后点击继续到百家号。",
-        )
 
         current_platform = "baijiahao"
         current_step = "Preparing Baijiahao"
@@ -74,7 +64,7 @@ def run_publisher_workflow(
             context.close()
         if playwright is not None:
             playwright.stop()
-        controller.completed("发布准备流程完成。三个平台均已停在最终发布按钮之前。")
+        controller.completed("发布准备流程完成。百家号和微信公众号均已停在最终发布按钮之前。")
     except BaseException as exc:
         error_step = getattr(exc, "step", current_step)
         try:
