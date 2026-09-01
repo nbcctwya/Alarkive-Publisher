@@ -85,6 +85,7 @@ v0.1.4 focuses on bug fixes and workflow hardening.
 建议使用 Python 虚拟环境：
 
 ```powershell
+cd "<项目所在目录>"
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
@@ -95,6 +96,7 @@ python -m pip install -r requirements.txt
 如果 PowerShell 不允许激活脚本，也可以直接使用虚拟环境中的 Python：
 
 ```powershell
+cd "<项目所在目录>"
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
@@ -116,19 +118,46 @@ $env:ALARKIVE_BROWSER_DATA_DIR = "D:\Alarkive\browser-data"
 Alarkive Package v0.1 的正式格式规范见 [`PACKAGE_FORMAT.md`](PACKAGE_FORMAT.md)，其
 `manifest.json` 的机器可读 Schema 见 [`package.schema.json`](package.schema.json)。
 
-启动 Web Content Manager：
+### Web Content Manager 使用流程
 
-```powershell
-python -m alarkive_publisher.web.app
-```
+1. 打开 PowerShell，进入项目所在目录。请将下面的 `<项目所在目录>` 替换为实际路径：
 
-访问：
+   ```powershell
+   cd "<项目所在目录>"
+   ```
 
-```text
-http://127.0.0.1:8000
-```
+2. 如果已经创建虚拟环境，先激活它：
 
-在网页中填写任务名称、三个平台的标题和正文，选择 PNG 图片并调整顺序，然后点击“保存图文”。任务会保存到项目根目录的 `posts/`，不需要创建或复制任何旧格式目录。上传内容必须是实际 PNG 文件（包含 PNG signature），每张不超过 20 MB，每个任务不超过 20 张且图片总大小不超过 100 MB；混合选择时，非 PNG 文件会被忽略并提示。
+   ```powershell
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   如果不能激活虚拟环境，可跳过这一步，直接使用后面的 `.\.venv\Scripts\python.exe` 命令。
+
+3. 启动 Web Content Manager：
+
+   ```powershell
+   python -m alarkive_publisher.web.app
+   ```
+
+   未激活虚拟环境时使用：
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m alarkive_publisher.web.app
+   ```
+
+4. 浏览器访问 `http://127.0.0.1:8000`，填写任务名称、三个平台的标题和正文，上传 PNG 图片，然后点击“保存图文”。
+
+5. 进入任务详情页后：
+
+   - 点击“发布全部”，按小红书 → 百家号 → 微信公众号的顺序准备三个平台内容。
+   - 点击对应平台内容卡片下方的“发布小红书”“发布百家号”或“发布小绿书”，只准备该平台内容。
+   - Publisher 会启动共享 persistent Chrome，并停在平台最终发布按钮之前；登录、选择公众号和最终发布都需要用户手工完成。
+   - 完整流程中，小红书或百家号准备完成后点击“继续”；最后一个平台准备完成后点击“结束流程并关闭浏览器”。单平台准备完成后直接点击“结束流程并关闭浏览器”。
+
+6. 使用完成后回到运行 Web Manager 的 PowerShell 窗口，按 `Ctrl+C` 停止服务。
+
+任务会保存到项目根目录的 `posts/`，不需要创建或复制任何旧格式目录。上传内容必须是实际 PNG 文件（包含 PNG signature），每张不超过 20 MB，每个任务不超过 20 张且图片总大小不超过 100 MB；混合选择时，非 PNG 文件会被忽略并提示。
 
 三个正文区域旁都提供平台 Prompt：可以点击“复制小红书 Prompt”生成适合小红书的精炼文案，点击“复制百家号 Prompt”生成带 `[[image:N]]` 图片占位符的百家号正文，或点击“复制小绿书 Prompt”生成适合微信公众号图文阅读的简洁文案。Prompt 只提供给用户复制到当前使用的 AI 工具，不会调用 AI API；小红书和小绿书不依赖图片即可复制，百家号仍需先上传图片。百家号页面会实时提示 marker 的有效性、重复引用和未使用图片情况。
 
