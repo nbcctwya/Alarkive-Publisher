@@ -334,6 +334,23 @@ def _check_login(page: Page, controller: WorkflowController) -> None:
 def _close_dialogs(page: Page) -> None:
     """Close non-content onboarding overlays without touching publish controls."""
 
+    # The current creator page can restore the AI assistant as a transparent
+    # drawer.  Its mask still intercepts pointer events even though the
+    # article editor remains visible.  Close only this named assistant drawer;
+    # never dismiss an arbitrary drawer because the image uploader is also a
+    # drawer and is part of the publishing flow.
+    assistant_mask = page.locator(
+        '.byte-drawer-wrapper.ai-assistant-drawer:visible '
+        '.byte-drawer-mask:visible'
+    )
+    mask = _first_interactable(assistant_mask)
+    if mask is not None:
+        try:
+            mask.click(force=True)
+            page.wait_for_timeout(300)
+        except Exception:
+            pass
+
     roots = page.locator(
         '[role="dialog"], .ant-modal, [class*="modal"], '
         '[class*="popover"], [class*="tooltip"]'

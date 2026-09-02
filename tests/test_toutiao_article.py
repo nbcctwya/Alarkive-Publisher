@@ -11,6 +11,7 @@ from alarkive_publisher.inline_images import ImageBlock, TextBlock
 from alarkive_publisher.toutiao_article import (
     EDITOR_URL,
     ToutiaoImageUploadContext,
+    _close_dialogs,
     _navigate,
     _image_file_inputs,
     _fill_body_with_inline_images,
@@ -81,6 +82,58 @@ class ToutiaoArticleRoutingTests(unittest.TestCase):
 
         self.assertEqual(page.args, (EDITOR_URL, "commit", 60_000))
         wait_for_dom.assert_called_once_with(page)
+
+    def test_close_dialogs_dismisses_only_the_named_ai_assistant_mask(self) -> None:
+        class Mask:
+            def __init__(self) -> None:
+                self.clicked = False
+
+            def is_visible(self) -> bool:
+                return True
+
+            def bounding_box(self) -> dict[str, float]:
+                return {"width": 10, "height": 10}
+
+            def evaluate(self, script: str):
+                del script
+                return True
+
+            def click(self, *, force: bool) -> None:
+                self.clicked = force
+
+        class Collection:
+            def __init__(self, values: list[Mask]) -> None:
+                self.values = values
+
+            def count(self) -> int:
+                return len(self.values)
+
+            def nth(self, index: int) -> Mask:
+                return self.values[index]
+
+            def get_by_text(self, label: str, *, exact: bool):
+                del label, exact
+                return Collection([])
+
+        class Page:
+            def __init__(self) -> None:
+                self.mask = Mask()
+
+            def locator(self, selector: str) -> Collection:
+                if "ai-assistant-drawer" in selector:
+                    return Collection([self.mask])
+                return Collection([])
+
+            def get_by_text(self, label: str, *, exact: bool):
+                del label, exact
+                return Collection([])
+
+            def wait_for_timeout(self, milliseconds: int) -> None:
+                del milliseconds
+
+        page = Page()
+        _close_dialogs(page)  # type: ignore[arg-type]
+        self.assertTrue(page.mask.clicked)
 
     def test_marker_plan_reads_public_long_and_appends_unused_images_in_order(self) -> None:
         content = ContentVariant(
