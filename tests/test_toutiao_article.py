@@ -10,11 +10,17 @@ from alarkive_publisher.content import ContentVariant, PostContent
 from alarkive_publisher.inline_images import ImageBlock, TextBlock
 from alarkive_publisher.toutiao_article import (
     EDITOR_URL,
+    ToutiaoImageUploadContext,
     _navigate,
+    _image_file_inputs,
     _fill_body_with_inline_images,
     _fill_title,
     _inline_image_blocks,
     _insert_images_at_end,
+    _insert_image,
+    _select_uploaded_toutiao_image,
+    _wait_for_upload_complete,
+    _wait_for_upload_started,
     run_toutiao_article,
 )
 from alarkive_publisher.workflow_controller import WorkflowController
@@ -116,6 +122,9 @@ class ToutiaoArticleRoutingTests(unittest.TestCase):
         ), patch(
             "alarkive_publisher.toutiao_article._inline_text_blocks_are_present",
             return_value=True,
+        ), patch(
+            "alarkive_publisher.toutiao_article._editor_image_count",
+            side_effect=[0, 3],
         ):
             _fill_body_with_inline_images(object(), object(), content, blocks)  # type: ignore[arg-type]
 
@@ -139,9 +148,192 @@ class ToutiaoArticleRoutingTests(unittest.TestCase):
         ), patch(
             "alarkive_publisher.toutiao_article._insert_image",
             side_effect=lambda page, body, image: calls.append(image),
+        ), patch(
+            "alarkive_publisher.toutiao_article._editor_image_count",
+            side_effect=[0, 3],
         ):
             _insert_images_at_end(object(), object(), images)  # type: ignore[arg-type]
         self.assertEqual(calls, list(images))
+
+    def test_insert_image_focuses_editor_before_finding_trigger(self) -> None:
+        events: list[str] = []
+
+        class Chooser:
+            def set_files(self, path: str, *, timeout: int) -> None:
+                del path, timeout
+
+        context = ToutiaoImageUploadContext(
+            frame=object(), root=None, mode="native", chooser=Chooser()  # type: ignore[arg-type]
+        )
+        with patch(
+            "alarkive_publisher.toutiao_article._editor_image_count",
+            return_value=0,
+        ), patch(
+            "alarkive_publisher.toutiao_article._focus_editor_for_image_insertion",
+            side_effect=lambda editor: events.append("focus"),
+        ), patch(
+            "alarkive_publisher.toutiao_article._image_trigger",
+            side_effect=lambda page, editor: events.append("trigger") or object(),
+        ), patch(
+            "alarkive_publisher.toutiao_article._open_inline_image_upload",
+            return_value=context,
+        ), patch(
+            "alarkive_publisher.toutiao_article._wait_for_upload_started"
+        ), patch(
+            "alarkive_publisher.toutiao_article._wait_for_upload_complete"
+        ), patch(
+            "alarkive_publisher.toutiao_article._wait_for_editor_images"
+        ):
+            _insert_image(object(), object(), Path("01.png"))  # type: ignore[arg-type]
+
+        self.assertEqual(events[:2], ["focus", "trigger"])
+
+    def test_image_inputs_never_use_page_global_fallback(self) -> None:
+        with patch(
+            "alarkive_publisher.toutiao_article._visible_inline_upload_contexts",
+            return_value=[],
+        ):
+            self.assertEqual(_image_file_inputs(object()), [])  # type: ignore[arg-type]
+
+    def test_image_input_is_scoped_to_open_inline_upload_context(self) -> None:
+        class Input:
+            def __init__(self, accept: str) -> None:
+                self.accept = accept
+
+            def get_attribute(self, name: str) -> str | None:
+                return self.accept if name == "accept" else None
+
+        class Collection:
+            def __init__(self, values: list[Input]) -> None:
+                self.values = values
+
+            def count(self) -> int:
+                return len(self.values)
+
+            def nth(self, index: int) -> Input:
+                return self.values[index]
+
+        class Root:
+            def __init__(self) -> None:
+                self.inputs = Collection([Input("image/png")])
+
+            def locator(self, selector: str) -> Collection:
+                self.selector = selector
+                return self.inputs
+
+        root = Root()
+        context = ToutiaoImageUploadContext(
+            frame=object(), root=root, mode="dialog"  # type: ignore[arg-type]
+        )
+        inputs = _image_file_inputs(object(), context)  # type: ignore[arg-type]
+        self.assertEqual(len(inputs), 1)
+        self.assertIs(inputs[0], root.inputs.values[0])
+
+    def test_upload_start_does_not_accept_first_idle_observation(self) -> None:
+        class Page:
+            def __init__(self) -> None:
+                self.waits = 0
+
+            def wait_for_timeout(self, milliseconds: int) -> None:
+                del milliseconds
+                self.waits += 1
+
+        page = Page()
+        context = ToutiaoImageUploadContext(frame=object(), root=object(), mode="dialog")  # type: ignore[arg-type]
+        with patch(
+            "alarkive_publisher.toutiao_article._raise_if_upload_failed"
+        ), patch(
+            "alarkive_publisher.toutiao_article._editor_image_count",
+            return_value=0,
+        ), patch(
+            "alarkive_publisher.toutiao_article._context_is_busy",
+            side_effect=[False, True],
+        ), patch(
+            "alarkive_publisher.toutiao_article._new_thumbnail_present",
+            return_value=False,
+        ):
+            _wait_for_upload_started(page, context, object(), 0, timeout=1_000)  # type: ignore[arg-type]
+
+        self.assertEqual(page.waits, 1)
+
+    def test_upload_completion_requires_ready_state_and_stability(self) -> None:
+        class Page:
+            def __init__(self) -> None:
+                self.waits = 0
+
+            def wait_for_timeout(self, milliseconds: int) -> None:
+                del milliseconds
+                self.waits += 1
+
+        page = Page()
+        context = ToutiaoImageUploadContext(frame=object(), root=object(), mode="dialog")  # type: ignore[arg-type]
+        with patch(
+            "alarkive_publisher.toutiao_article._raise_if_upload_failed"
+        ), patch(
+            "alarkive_publisher.toutiao_article._editor_image_count",
+            return_value=0,
+        ), patch(
+            "alarkive_publisher.toutiao_article._context_is_busy",
+            side_effect=[False, False],
+        ), patch(
+            "alarkive_publisher.toutiao_article._new_thumbnail_present",
+            side_effect=[False, False, True, True],
+        ), patch(
+            "alarkive_publisher.toutiao_article._context_text",
+            return_value="上传中",
+        ):
+            _wait_for_upload_complete(page, context, object(), 0, timeout=1_000)  # type: ignore[arg-type]
+
+        self.assertEqual(page.waits, 3)
+
+    def test_select_uploaded_toutiao_image_chooses_new_thumbnail(self) -> None:
+        class Thumbnail:
+            def __init__(self, src: str) -> None:
+                self.src = src
+                self.clicked = False
+
+            def get_attribute(self, name: str) -> str | None:
+                return self.src if name == "src" else "thumbnail"
+
+            def inner_text(self, *, timeout: int) -> str:
+                del timeout
+                return ""
+
+            def text_content(self, *, timeout: int) -> str:
+                del timeout
+                return ""
+
+            def click(self, *, force: bool) -> None:
+                del force
+                self.clicked = True
+
+        class Collection:
+            def __init__(self, values: list[Thumbnail]) -> None:
+                self.values = values
+
+            def count(self) -> int:
+                return len(self.values)
+
+            def nth(self, index: int) -> Thumbnail:
+                return self.values[index]
+
+        old = Thumbnail("old.png")
+        new = Thumbnail("new.png")
+
+        class Root:
+            def locator(self, selector: str) -> Collection:
+                del selector
+                return Collection([old, new])
+
+        context = ToutiaoImageUploadContext(
+            frame=object(),
+            root=Root(),  # type: ignore[arg-type]
+            mode="dialog",
+            before_thumbnails=("old.png|thumbnail|thumbnail|thumbnail|thumbnail|",),
+        )
+        _select_uploaded_toutiao_image(context)
+        self.assertFalse(old.clicked)
+        self.assertTrue(new.clicked)
 
 
 class ToutiaoArticlePublisherTests(unittest.TestCase):

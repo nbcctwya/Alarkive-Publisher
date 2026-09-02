@@ -1,4 +1,4 @@
-# Alarkive Publisher v0.2.1
+# Alarkive Publisher v0.2.1.1
 
 Alarkive Publisher 负责把研究内容整理为不可变的 Alarkive Package，并为已经接入的渠道准备发布页面。当前版本的内容模型是：
 
@@ -17,6 +17,8 @@ Publisher
 - `baijiahao`：消费 `public_long`（公域长文）
 - `toutiao_article`：消费 `public_long`（公域长文）
 - `wechat_image`：消费 `wechat_short`（微信图文 / 小绿书）
+
+v0.2.1.1 加固了今日头条文章正文插图：使用正文编辑器作用域内的上传控件、明确的上传状态验证，以及插入后的图片数量检查。
 
 内容模型已经预留但尚未接入 Publisher 的目标是：微信公众号长文、微头条。它们可以保存、读取和展示，但不会启动空的浏览器流程。
 

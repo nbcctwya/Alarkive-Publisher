@@ -9,10 +9,12 @@ is never performed here.
 from __future__ import annotations
 
 import re
+import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Locator, Page, TimeoutError
+from playwright.sync_api import Frame, Locator, Page, TimeoutError
 
 from .content import PlatformContent, PostContent
 from .inline_images import (
@@ -30,6 +32,45 @@ from .xiaohongshu import PublisherError, _run_step
 
 HOME_URL = "https://mp.toutiao.com/profile_v4/"
 EDITOR_URL = "https://mp.toutiao.com/profile_v4/graphic/publish"
+
+_INLINE_UPLOAD_ROOT_SELECTOR = (
+    '[role="dialog"], .ant-modal, [class*="modal"], [class*="drawer"], '
+    '[class*="popover"]'
+)
+_INLINE_UPLOAD_HINT_RE = re.compile(
+    r"图片|图像|照片|本地上传|上传图片|选择文件|素材|插入图片|"
+    r"image|picture|photo|upload|media",
+    re.IGNORECASE,
+)
+_INLINE_UPLOAD_ACTIVITY_RE = re.compile(
+    r"上传中|正在上传|处理中|解析中|uploading|processing|progress",
+    re.IGNORECASE,
+)
+_UPLOAD_FAILURE_RE = re.compile(
+    r"上传失败|上传错误|upload failed|upload error",
+    re.IGNORECASE,
+)
+_COVER_CONTROL_RE = re.compile(r"封面|头图|头像|cover|header", re.IGNORECASE)
+_IMAGE_CONTROL_RE = re.compile(
+    r"image|picture|photo|upload|media|icon[-_]?pic|icon[-_]?image|"
+    r"插图|配图|图片|图像|照片|媒体",
+    re.IGNORECASE,
+)
+_THUMBNAIL_SELECTOR = (
+    'img, [role="option"], [class*="thumbnail"], [class*="thumb"], '
+    '[data-testid*="image"], [data-testid*="thumb"], [data-e2e*="image"]'
+)
+
+
+@dataclass
+class ToutiaoImageUploadContext:
+    """The UI context opened by the article editor's image control."""
+
+    frame: Frame
+    root: Locator | None
+    mode: str
+    chooser: object | None = None
+    before_thumbnails: tuple[str, ...] = ()
 
 
 def _is_interactable(locator: Locator) -> bool:
@@ -73,11 +114,70 @@ def _first_interactable(locator: Locator) -> Locator | None:
     return None
 
 
-def _visible_text(page: Page) -> str:
+def _is_enabled_control(locator: Locator) -> bool:
+    """Reject controls that are visible but disabled by the editor state."""
+
+    if not _is_interactable(locator):
+        return False
     try:
-        return page.locator("body").inner_text(timeout=2_000)
+        if not locator.is_enabled():
+            return False
     except Exception:
-        return ""
+        return False
+    try:
+        aria_disabled = (locator.get_attribute("aria-disabled") or "").lower()
+        if aria_disabled == "true" or locator.get_attribute("disabled") is not None:
+            return False
+        classes = locator.get_attribute("class") or ""
+        if re.search(
+            r"(?:^|[-_\s])disable(?:d)?(?:$|[-_\s])|is-disabled|forbidden",
+            classes,
+            re.I,
+        ):
+            return False
+        if not locator.evaluate(
+            """
+            element => {
+                let current = element;
+                while (current && current.nodeType === Node.ELEMENT_NODE) {
+                    const className = String(current.getAttribute('class') || '');
+                    const ariaDisabled = String(current.getAttribute('aria-disabled') || '').toLowerCase();
+                    if (ariaDisabled === 'true' || current.hasAttribute('disabled') ||
+                        /(?:^|[-_\s])disable(?:d)?(?:$|[-_\s])|is-disabled|forbidden/i.test(className)) {
+                        return false;
+                    }
+                    current = current.parentElement;
+                }
+                return true;
+            }
+            """
+        ):
+            return False
+    except Exception:
+        return False
+    return True
+
+
+def _locator_text(locator: Locator) -> str:
+    try:
+        return locator.inner_text(timeout=1_000)
+    except Exception:
+        try:
+            return locator.text_content(timeout=1_000) or ""
+        except Exception:
+            return ""
+
+
+def _visible_text(page: Page) -> str:
+    texts: list[str] = []
+    for frame in page.frames:
+        try:
+            text = frame.locator("body").inner_text(timeout=2_000)
+        except Exception:
+            continue
+        if text.strip():
+            texts.append(text)
+    return "\n".join(texts)
 
 
 def _wait_for_dom(page: Page) -> None:
@@ -89,6 +189,92 @@ def _wait_for_dom(page: Page) -> None:
         "() => !!document.body && document.body.innerText.trim().length > 0",
         timeout=30_000,
     )
+
+
+def _capture_debug_snapshot(page: Page) -> None:
+    """Save public DOM diagnostics without serializing browser storage."""
+
+    debug_dir = Path("debug")
+    try:
+        debug_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    dom_parts: list[str] = []
+    visible_parts: list[str] = []
+    prosemirror_count = 0
+    toolbar_count = 0
+    for index, frame in enumerate(page.frames):
+        try:
+            prosemirror_count += frame.locator(".ProseMirror").count()
+            toolbar_count += frame.locator(
+                '[role="toolbar"], [class*="toolbar"]'
+            ).count()
+        except Exception:
+            pass
+        try:
+            html = frame.evaluate(
+                "() => document.documentElement ? document.documentElement.outerHTML : ''"
+            )
+            dom_parts.append(f"<!-- frame {index}: {frame.url} -->\n{html}")
+        except Exception as exc:
+            dom_parts.append(f"<!-- frame {index}: unavailable: {type(exc).__name__} -->")
+        try:
+            visible = frame.locator("body").inner_text(timeout=2_000)
+            visible_parts.append(f"[frame {index}: {frame.url}]\n{visible}")
+        except Exception:
+            continue
+
+    try:
+        title = page.title()
+    except Exception:
+        title = ""
+    try:
+        upload_root_count = len(_visible_inline_upload_contexts(page))
+    except Exception:
+        upload_root_count = 0
+    try:
+        file_input_count = len(_image_file_inputs(page))
+    except Exception:
+        file_input_count = 0
+    diagnostic = "\n".join(
+        (
+            f"current_url: {page.url}",
+            f"page_title: {title}",
+            f"frame_count: {len(page.frames)}",
+            f"prosemirror_count: {prosemirror_count}",
+            f"visible_toolbar_count: {toolbar_count}",
+            f"visible_upload_root_count: {upload_root_count}",
+            f"visible_file_input_count: {file_input_count}",
+        )
+    )
+    try:
+        (debug_dir / "toutiao_article-dom.html").write_text(
+            "\n\n".join(dom_parts), encoding="utf-8"
+        )
+        (debug_dir / "toutiao_article-visible-text.txt").write_text(
+            "\n\n".join(visible_parts), encoding="utf-8"
+        )
+        (debug_dir / "toutiao_article-diagnostic.txt").write_text(
+            diagnostic, encoding="utf-8"
+        )
+    except OSError:
+        pass
+    try:
+        page.screenshot(
+            path=str(debug_dir / "toutiao_article-failure.png"),
+            full_page=True,
+        )
+    except Exception:
+        pass
+
+
+def _run_toutiao_step(page: Page, step: str, action):
+    try:
+        return _run_step(step, action)
+    except PublisherError:
+        _capture_debug_snapshot(page)
+        raise
 
 
 def _navigate(page: Page, url: str) -> None:
@@ -506,113 +692,125 @@ def _focus_editor_for_image_insertion(editor: Locator) -> None:
         pass
 
 
-def _image_trigger(page: Page) -> Locator | None:
-    name = re.compile(r"(?:插入|添加|上传)?\s*(?:图片|图像|照片)|image", re.IGNORECASE)
-    # Semantic labels are preferred.  Exclude cover/header controls so an
-    # upload can only be initiated from the article editor toolbar.
+def _control_label(locator: Locator) -> str:
+    attributes = (
+        "aria-label",
+        "title",
+        "data-tooltip",
+        "data-tip",
+        "data-title",
+        "data-testid",
+        "data-e2e",
+        "data-action",
+        "data-command",
+        "data-icon",
+        "data-name",
+        "data-type",
+        "id",
+        "name",
+        "value",
+        "onclick",
+        "class",
+    )
+    try:
+        label = " ".join(str(locator.get_attribute(attribute) or "") for attribute in attributes)
+        label += " " + (locator.text_content() or "")
+        label += " " + locator.evaluate("element => element.outerHTML")
+        # Toutiao's current editor puts the tool name on the ancestor
+        # ``.syl-toolbar-tool.image`` rather than on the button itself.
+        ancestor = locator
+        for _ in range(4):
+            ancestor = ancestor.locator("xpath=..")
+            label += " " + " ".join(
+                str(ancestor.get_attribute(attribute) or "")
+                for attribute in ("class", "aria-label", "title", "data-testid", "data-action")
+            )
+        return label
+    except Exception:
+        return ""
+
+
+def _editor_toolbar_scopes(page: Page, editor: Locator | None) -> list[Locator]:
+    toolbar_selector = (
+        '[role="toolbar"], [class*="toolbar"], [class*="syl"], '
+        '[data-toolbar], [data-editor-toolbar]'
+    )
+    scopes: list[Locator] = []
+    if editor is not None:
+        # In the current editor the toolbar is a sibling or a nearby ancestor
+        # of ProseMirror. Walking only a few ancestors keeps this editor-bound.
+        for level in range(1, 5):
+            try:
+                parent = editor.locator("xpath=" + ".." + "/.." * (level - 1))
+                scopes.append(parent)
+                scopes.append(parent.locator(toolbar_selector))
+            except Exception:
+                continue
     for frame in page.frames:
-        candidates = [
-            frame.get_by_role("button", name=name),
-            frame.locator(
-                '[aria-label*="图片"], [title*="图片"], '
-                '[data-tooltip*="图片"], [data-tip*="图片"], [data-title*="图片"], '
-                '[data-testid*="image"], [data-e2e*="image"], '
-                '[data-action*="image"], [data-command*="image"], '
-                '[class*="image-insert"], [class*="insert-image"], '
-                '[class*="image-upload"]'
-            ),
-        ]
-        for locator in candidates:
-            try:
-                count = locator.count()
-            except Exception:
-                continue
-            for index in range(count):
-                candidate = locator.nth(index)
-                if not _is_interactable(candidate):
-                    continue
-                try:
-                    if not candidate.is_enabled():
-                        continue
-                except Exception:
-                    pass
-                label = " ".join(
-                    str(candidate.get_attribute(attribute) or "")
-                    for attribute in (
-                        "aria-label",
-                        "title",
-                        "data-tooltip",
-                        "data-tip",
-                        "data-title",
-                        "data-testid",
-                        "data-e2e",
-                        "data-action",
-                        "data-command",
-                        "class",
-                    )
-                )
-                if re.search(r"封面|头图|头像", label):
-                    continue
-                return candidate
-
-        # Some current builds expose toolbar buttons with no accessible name
-        # and put the icon identity only on a descendant SVG/use element.
-        # Inspect that small, editor-scoped control set as a fallback instead
-        # of relying on a positional button index.
-        toolbar_buttons = frame.locator(
-            '[role="toolbar"] button, [role="toolbar"] [role="button"], '
-            '[class*="toolbar"] button, [class*="toolbar"] [role="button"], '
-            '[class*="syl"] button, [class*="syl"] [role="button"], '
-            '[data-toolbar], [data-toolbar] button, '
-            '[data-editor-toolbar], [data-editor-toolbar] button'
+        scopes.extend(
+            [
+                frame.locator(
+                    '[role="toolbar"]:has(.ProseMirror), '
+                    '[class*="toolbar"]:has(.ProseMirror), '
+                    '[data-toolbar]:has(.ProseMirror), '
+                    '[data-editor-toolbar]:has(.ProseMirror)'
+                ),
+                frame.locator(toolbar_selector),
+            ]
         )
-        for index in range(toolbar_buttons.count()):
-            candidate = toolbar_buttons.nth(index)
-            if not _is_interactable(candidate):
-                continue
-            try:
-                label = " ".join(
-                    str(candidate.get_attribute(attribute) or "")
-                    for attribute in (
-                        "aria-label",
-                        "title",
-                        "data-tooltip",
-                        "data-tip",
-                        "data-testid",
-                        "data-e2e",
-                        "data-action",
-                        "data-command",
-                        "data-icon",
-                        "data-name",
-                        "data-type",
-                        "id",
-                        "name",
-                        "value",
-                        "onclick",
-                        "class",
-                    )
-                )
-                label += " " + candidate.evaluate("element => element.outerHTML")
-            except Exception:
-                continue
-            if re.search(r"封面|头图|头像", label, re.IGNORECASE):
-                continue
-            if re.search(
-                r"image|picture|photo|upload|media|icon[-_]?pic|icon[-_]?image|"
-                r"插图|配图|图片|图像|照片|媒体",
-                label,
-                re.IGNORECASE,
-            ):
-                return candidate
+    return scopes
 
-        # A few builds render the toolbar as generic divs and omit both the
-        # toolbar role and the icon name from the button itself.  Limit this
-        # last fallback to controls near the ProseMirror root and inspect the
-        # complete control markup; do not use a global nth-button guess.
+
+def _image_control_in_scope(scope: Locator) -> Locator | None:
+    name = re.compile(r"(?:插入|添加|上传)?\s*(?:图片|图像|照片)|image", re.IGNORECASE)
+    candidates = [
+        scope.get_by_role("button", name=name),
+        scope.locator(
+            '[aria-label*="图片"], [title*="图片"], '
+            '[data-tooltip*="图片"], [data-tip*="图片"], [data-title*="图片"], '
+            '[data-testid*="image"], [data-e2e*="image"], '
+            '[data-action*="image"], [data-command*="image"], '
+            '[class*="image-insert"], [class*="insert-image"], '
+            '[class*="image-upload"], '
+            '[class*="syl-toolbar-tool"][class*="image"] button, '
+            '[class*="toolbar"] [class*="image"] button'
+        ),
+        scope.locator('button, [role="button"], [tabindex]'),
+    ]
+    for locator in candidates:
+        try:
+            count = locator.count()
+        except Exception:
+            continue
+        for index in range(count):
+            candidate = locator.nth(index)
+            if not _is_enabled_control(candidate):
+                continue
+            if candidate.get_attribute("contenteditable") == "true":
+                continue
+            label = _control_label(candidate)
+            if _COVER_CONTROL_RE.search(label):
+                continue
+            if _IMAGE_CONTROL_RE.search(label):
+                return candidate
+    return None
+
+
+def _image_trigger(page: Page, editor: Locator | None = None) -> Locator | None:
+    """Find an enabled image control after the editor owns the selection."""
+
+    # The toolbar scoped to the editor is authoritative. Page-level controls
+    # are deliberately considered only after these candidates fail.
+    for scope in _editor_toolbar_scopes(page, editor):
+        candidate = _image_control_in_scope(scope)
+        if candidate is not None:
+            return candidate
+
+    for frame in page.frames:
         controls = frame.locator('button, [role="button"], [tabindex]')
         for index in range(controls.count()):
             candidate = controls.nth(index)
-            if not _is_interactable(candidate):
+            if not _is_enabled_control(candidate):
                 continue
             try:
                 if candidate.get_attribute("contenteditable") == "true":
@@ -631,138 +829,364 @@ def _image_trigger(page: Page) -> Locator | None:
                     }
                     """
                 )
-                if not near_editor:
-                    continue
-                label = " ".join(
-                    str(candidate.get_attribute(attribute) or "")
-                    for attribute in (
-                        "aria-label",
-                        "title",
-                        "data-tooltip",
-                        "data-tip",
-                        "data-title",
-                        "data-testid",
-                        "data-e2e",
-                        "data-action",
-                        "data-command",
-                        "data-icon",
-                        "data-name",
-                        "data-type",
-                        "id",
-                        "name",
-                        "value",
-                        "onclick",
-                        "class",
-                    )
-                )
-                label += " " + (candidate.text_content() or "")
-                label += " " + candidate.evaluate("element => element.outerHTML")
             except Exception:
                 continue
-            if re.search(r"封面|头图|头像|预览并发布|发布", label, re.IGNORECASE):
+            if not near_editor:
                 continue
-            if re.search(
-                r"image|picture|photo|upload|media|icon[-_]?pic|icon[-_]?image|"
-                r"插图|配图|图片|图像|照片|媒体",
-                label,
-                re.IGNORECASE,
-            ):
+            label = _control_label(candidate)
+            if _COVER_CONTROL_RE.search(label) or re.search(r"预览并发布|发布", label, re.I):
+                continue
+            if _IMAGE_CONTROL_RE.search(label):
+                return candidate
+
+    # Last-resort semantic fallback. It is still enabled-only and explicitly
+    # excludes cover/header actions, so a missing inline UI fails fast instead
+    # of silently uploading to an unrelated media input.
+    for frame in page.frames:
+        candidate = _image_control_in_scope(frame)
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _acceptable_image_input(locator: Locator) -> bool:
+    try:
+        accept = (locator.get_attribute("accept") or "").lower()
+    except Exception:
+        return False
+    return "image" in accept or ".png" in accept or ".jpg" in accept or not accept
+
+
+def _inline_upload_root_signature(root: Locator) -> str:
+    attributes = " ".join(
+        str(root.get_attribute(attribute) or "")
+        for attribute in ("id", "class", "role", "aria-label", "data-testid")
+    )
+    return f"{attributes}|{_locator_text(root)[:500]}"
+
+
+def _looks_like_inline_upload_root(root: Locator) -> bool:
+    if not _is_interactable(root):
+        return False
+    label = " ".join(
+        str(root.get_attribute(attribute) or "")
+        for attribute in ("id", "class", "role", "aria-label", "data-testid", "title")
+    )
+    text = f"{label} {_locator_text(root)}"
+    if _COVER_CONTROL_RE.search(text) and not re.search(r"正文|插入", text, re.I):
+        return False
+    try:
+        file_inputs = root.locator('input[type="file"]')
+        if any(
+            _acceptable_image_input(file_inputs.nth(index))
+            for index in range(file_inputs.count())
+        ):
+            return True
+    except Exception:
+        pass
+    return bool(_INLINE_UPLOAD_HINT_RE.search(text) and re.search(r"图片|image|upload|本地|素材", text, re.I))
+
+
+def _visible_inline_upload_contexts(page: Page) -> list[ToutiaoImageUploadContext]:
+    contexts: list[ToutiaoImageUploadContext] = []
+    for frame in page.frames:
+        roots = frame.locator(_INLINE_UPLOAD_ROOT_SELECTOR)
+        try:
+            count = roots.count()
+        except Exception:
+            continue
+        for index in range(count):
+            root = roots.nth(index)
+            if not _looks_like_inline_upload_root(root):
+                continue
+            class_name = (root.get_attribute("class") or "").lower()
+            mode = "drawer" if "drawer" in class_name else "dialog"
+            contexts.append(
+                ToutiaoImageUploadContext(
+                    frame=frame,
+                    root=root,
+                    mode=mode,
+                    before_thumbnails=_thumbnail_signatures(root),
+                )
+            )
+    return contexts
+
+
+def _thumbnail_signatures(root: Locator) -> tuple[str, ...]:
+    signatures: list[str] = []
+    try:
+        thumbnails = root.locator(_THUMBNAIL_SELECTOR)
+        for index in range(thumbnails.count()):
+            candidate = thumbnails.nth(index)
+            try:
+                value = "|".join(
+                    str(candidate.get_attribute(attribute) or "")
+                    for attribute in ("src", "alt", "data-testid", "data-e2e", "class")
+                )
+                value += "|" + (_locator_text(candidate)[:160])
+                signatures.append(value)
+            except Exception:
+                continue
+    except Exception:
+        return ()
+    return tuple(signatures)
+
+
+def _new_thumbnail_present(context: ToutiaoImageUploadContext) -> bool:
+    if context.root is None:
+        return False
+    current = _thumbnail_signatures(context.root)
+    remaining = list(context.before_thumbnails)
+    for signature in current:
+        if signature in remaining:
+            remaining.remove(signature)
+        else:
+            return True
+    return False
+
+
+def _wait_for_inline_upload_context(
+    page: Page,
+    before_signatures: set[tuple[int, str]],
+    timeout: int = 15_000,
+) -> ToutiaoImageUploadContext:
+    deadline = time.monotonic() + timeout / 1_000
+    while time.monotonic() < deadline:
+        for context in _visible_inline_upload_contexts(page):
+            signature = (id(context.frame), _inline_upload_root_signature(context.root))  # type: ignore[arg-type]
+            if signature not in before_signatures:
+                return context
+        page.wait_for_timeout(200)
+    raise PublisherError(
+        "Opening Toutiao article image upload",
+        "Could not open Toutiao inline image upload UI after activating the article editor control.",
+    )
+
+
+def _image_file_inputs(
+    page: Page,
+    context: ToutiaoImageUploadContext | None = None,
+) -> list[Locator]:
+    """Return only image inputs inside the causally opened upload context."""
+
+    roots: list[Locator] = []
+    if context is not None:
+        if context.root is None:
+            return []
+        roots = [context.root]
+    else:
+        roots = [
+            upload_context.root
+            for upload_context in _visible_inline_upload_contexts(page)
+            if upload_context.root is not None
+        ]
+
+    inputs: list[Locator] = []
+    for root in roots:
+        try:
+            candidates = root.locator('input[type="file"]')
+            for index in range(candidates.count()):
+                candidate = candidates.nth(index)
+                if _acceptable_image_input(candidate):
+                    inputs.append(candidate)
+        except Exception:
+            continue
+    return inputs
+
+
+def _wait_for_image_file_input(
+    page: Page,
+    context: ToutiaoImageUploadContext | None = None,
+    timeout: int = 15_000,
+) -> Locator:
+    deadline = time.monotonic() + timeout / 1_000
+    while time.monotonic() < deadline:
+        inputs = _image_file_inputs(page, context)
+        if inputs:
+            return inputs[-1]
+        page.wait_for_timeout(250)
+    raise PublisherError(
+        "Opening Toutiao article image upload",
+        "No image file input appeared inside the opened Toutiao inline-image UI.",
+    )
+
+
+def _context_text(page: Page, context: ToutiaoImageUploadContext) -> str:
+    if context.root is not None:
+        return _locator_text(context.root)
+    return _visible_text(page)
+
+
+def _context_is_busy(page: Page, context: ToutiaoImageUploadContext) -> bool:
+    roots = [context.root] if context.root is not None else [frame.locator("body") for frame in page.frames]
+    for root in roots:
+        if root is None:
+            continue
+        try:
+            busy = root.locator(
+                '[aria-busy="true"], [class*="loading"], [class*="uploading"], '
+                '[role="progressbar"]'
+            )
+            for index in range(busy.count()):
+                if _is_interactable(busy.nth(index)):
+                    return True
+        except Exception:
+            continue
+    return bool(_INLINE_UPLOAD_ACTIVITY_RE.search(_context_text(page, context)))
+
+
+def _raise_if_upload_failed(page: Page, context: ToutiaoImageUploadContext) -> None:
+    if _UPLOAD_FAILURE_RE.search(_context_text(page, context)):
+        raise PublisherError(
+            "Uploading Toutiao article image",
+            "The Toutiao inline-image UI reported an image upload failure.",
+        )
+
+
+def _wait_for_upload_started(
+    page: Page,
+    context: ToutiaoImageUploadContext,
+    editor: Locator,
+    before_count: int,
+    timeout: int = 30_000,
+) -> None:
+    """Wait until the upload visibly starts; absence of loading is not enough."""
+
+    deadline = time.monotonic() + timeout / 1_000
+    while time.monotonic() < deadline:
+        _raise_if_upload_failed(page, context)
+        if _editor_image_count(editor) > before_count or _context_is_busy(page, context):
+            return
+        if _new_thumbnail_present(context):
+            return
+        page.wait_for_timeout(200)
+    raise PublisherError(
+        "Uploading Toutiao article image",
+        "The Toutiao inline-image upload did not show a started/uploading state.",
+    )
+
+
+def _wait_for_upload_complete(
+    page: Page,
+    context: ToutiaoImageUploadContext | None = None,
+    editor: Locator | None = None,
+    before_count: int = 0,
+    timeout: int = 120_000,
+) -> None:
+    """Wait for a ready image and two stable non-busy observations."""
+
+    if context is None:
+        context = ToutiaoImageUploadContext(page.main_frame, None, "native")
+    stable_ready = 0
+    deadline = time.monotonic() + timeout / 1_000
+    while time.monotonic() < deadline:
+        _raise_if_upload_failed(page, context)
+        image_inserted = editor is not None and _editor_image_count(editor) > before_count
+        ready_thumbnail = _new_thumbnail_present(context)
+        success_text = bool(re.search(r"上传成功|已完成|ready|success", _context_text(page, context), re.I))
+        ready = image_inserted or ready_thumbnail or success_text
+        if ready and not _context_is_busy(page, context):
+            stable_ready += 1
+            if stable_ready >= 2:
+                return
+        else:
+            stable_ready = 0
+        page.wait_for_timeout(250)
+    raise PublisherError(
+        "Uploading Toutiao article image",
+        "The Toutiao inline-image upload did not reach a stable ready state.",
+    )
+
+
+def _find_inline_confirm_control(root: Locator) -> Locator | None:
+    pattern = re.compile(r"^(?:插入|确认|确定|完成)(?:图片|正文)?$", re.I)
+    candidates = [
+        root.get_by_role("button", name=pattern),
+        root.get_by_text(pattern, exact=True),
+    ]
+    for locator in candidates:
+        try:
+            count = locator.count()
+        except Exception:
+            continue
+        for index in range(count):
+            candidate = locator.nth(index)
+            if _is_enabled_control(candidate):
                 return candidate
     return None
 
 
-def _image_file_inputs(page: Page) -> list[Locator]:
-    inputs: list[Locator] = []
-    for frame in page.frames:
-        # An image dialog is the authoritative scope.  This prevents a
-        # similarly hidden cover/头图 input elsewhere in the page from being
-        # selected after the inline-image toolbar has been activated.
-        roots = [
-            frame.locator(
-                '#upload-drag-input, '
-                '[role="dialog"] input[type="file"], '
-                '.ant-modal input[type="file"], '
-                '[class*="modal"] input[type="file"], '
-                '.byte-drawer input[type="file"]'
-            ),
-            frame.locator('input[type="file"]'),
-        ]
-        for locator in roots:
-            scoped: list[Locator] = []
-            for index in range(locator.count()):
-                candidate = locator.nth(index)
-                accept = (candidate.get_attribute("accept") or "").lower()
-                if "image" in accept or ".png" in accept or ".jpg" in accept or not accept:
-                    scoped.append(candidate)
-            if scoped:
-                inputs.extend(scoped)
-                break
-    return inputs
+def _select_uploaded_toutiao_image(context: ToutiaoImageUploadContext) -> None:
+    """Select the newly uploaded thumbnail, never the first old asset."""
 
-
-def _wait_for_image_file_input(page: Page) -> Locator:
-    elapsed = 0
-    while elapsed < 15_000:
-        inputs = _image_file_inputs(page)
-        if inputs:
-            return inputs[-1]
-        page.wait_for_timeout(250)
-        elapsed += 250
-    raise TimeoutError("No Toutiao image file input appeared after opening the editor control.")
-
-
-def _wait_for_upload_complete(page: Page) -> None:
-    page.wait_for_function(
-        """
-        () => {
-            const root = document.body;
-            if (!root) return false;
-            const busy = Array.from(root.querySelectorAll(
-                '[aria-busy="true"], [class*="loading"], [class*="uploading"]'
-            )).some(element => {
-                const style = getComputedStyle(element);
-                const rect = element.getBoundingClientRect();
-                return style.display !== 'none' && style.visibility !== 'hidden' &&
-                    rect.width > 0 && rect.height > 0;
-            });
-            return !busy && !/(上传中|正在上传|处理中|uploading)/i.test(root.innerText || '');
-        }
-        """,
-        timeout=120_000,
-    )
-    if re.search(r"上传失败|上传错误|upload failed", _visible_text(page), re.IGNORECASE):
+    if context.root is None:
         raise PublisherError(
             "Uploading Toutiao article image",
-            "The Toutiao page reported an image upload failure.",
+            "Toutiao requires an image selection context, but no inline upload UI was retained.",
         )
-
-
-def _confirm_inline_upload(page: Page) -> None:
-    """Confirm only an image dialog, never a page-level publish action."""
-
-    dialogs = page.locator(
-        '[role="dialog"], .ant-modal, [class*="modal"], .byte-drawer'
-    )
-    for dialog_index in range(dialogs.count()):
-        dialog = dialogs.nth(dialog_index)
-        if not _is_interactable(dialog):
+    thumbnails = context.root.locator(_THUMBNAIL_SELECTOR)
+    remaining = list(context.before_thumbnails)
+    for index in range(thumbnails.count()):
+        candidate = thumbnails.nth(index)
+        signature = "|".join(
+            str(candidate.get_attribute(attribute) or "")
+            for attribute in ("src", "alt", "data-testid", "data-e2e", "class")
+        )
+        signature += "|" + _locator_text(candidate)[:160]
+        if signature in remaining:
+            remaining.remove(signature)
             continue
-        candidate = _first_interactable(
-            dialog.get_by_role(
-                "button",
-                name=re.compile(r"^(?:插入|确认|确定|完成)(?:图片|正文)?$"),
-            )
-        )
-        if candidate is None:
-            candidate = _first_interactable(
-                dialog.get_by_text(
-                    re.compile(r"^(?:插入|确认|确定|完成)(?:图片|正文)?$"),
-                    exact=True,
-                )
-            )
-        if candidate is not None:
-            candidate.click()
+        try:
+            candidate.click(force=True)
             return
+        except Exception as exc:
+            raise PublisherError(
+                "Selecting Toutiao article image",
+                f"Could not select the newly uploaded Toutiao image: {exc}",
+            ) from exc
+    raise PublisherError(
+        "Selecting Toutiao article image",
+        "The Toutiao inline-image UI did not show the newly uploaded image thumbnail.",
+    )
+
+
+def _confirm_inline_upload(
+    page: Page,
+    context: ToutiaoImageUploadContext | None = None,
+) -> bool:
+    """Confirm only the causally opened inline-image dialog/drawer."""
+
+    if context is None:
+        contexts = _visible_inline_upload_contexts(page)
+        context = contexts[-1] if contexts else None
+    if context is None or context.root is None:
+        return False
+    candidate = _find_inline_confirm_control(context.root)
+    if candidate is None:
+        return False
+    candidate.click()
+    return True
+
+
+def _wait_for_inline_upload_closed(
+    page: Page,
+    context: ToutiaoImageUploadContext,
+    timeout: int = 30_000,
+) -> None:
+    if context.root is None:
+        return
+    deadline = time.monotonic() + timeout / 1_000
+    while time.monotonic() < deadline:
+        try:
+            if not context.root.is_visible():
+                return
+        except Exception:
+            return
+        page.wait_for_timeout(200)
+    raise PublisherError(
+        "Uploading Toutiao article image",
+        "The Toutiao inline-image dialog did not close after inserting the selected image.",
+    )
 
 
 def _editor_image_count(editor: Locator) -> int:
@@ -785,33 +1209,88 @@ def _wait_for_editor_images(page: Page, editor: Locator, minimum: int) -> None:
     )
 
 
+def _visible_inline_upload_signatures(page: Page) -> set[tuple[int, str]]:
+    return {
+        (id(context.frame), _inline_upload_root_signature(context.root))  # type: ignore[arg-type]
+        for context in _visible_inline_upload_contexts(page)
+        if context.root is not None
+    }
+
+
+def _open_inline_image_upload(
+    page: Page,
+    trigger: Locator,
+) -> ToutiaoImageUploadContext:
+    """Open the inline upload UI and retain the frame/root it created."""
+
+    before_signatures = _visible_inline_upload_signatures(page)
+    try:
+        with page.expect_file_chooser(timeout=4_000) as chooser_info:
+            trigger.click()
+        return ToutiaoImageUploadContext(
+            frame=page.main_frame,
+            root=None,
+            mode="native",
+            chooser=chooser_info.value,
+        )
+    except TimeoutError:
+        context = _wait_for_inline_upload_context(page, before_signatures)
+        if context.root is None:
+            raise PublisherError(
+                "Opening Toutiao article image upload",
+                "Toutiao opened an image UI without a usable inline upload root.",
+            )
+        return context
+    except PlaywrightError as exc:
+        raise PublisherError(
+            "Opening Toutiao article image upload",
+            f"Could not activate the Toutiao inline-image control: {exc}",
+        ) from exc
+
+
 def _insert_image(page: Page, editor: Locator, image: Path) -> None:
     before_count = _editor_image_count(editor)
     # The current toolbar can remain disabled/unmounted until the ProseMirror
     # editor owns focus, so focus it before resolving the image control.
     _focus_editor_for_image_insertion(editor)
-    trigger = _image_trigger(page)
+    trigger = _image_trigger(page, editor)
     if trigger is None:
         raise PublisherError(
             "Uploading Toutiao article image",
             "Could not find the article editor's inline image control.",
         )
     path = str(image.resolve())
+    context = _open_inline_image_upload(page, trigger)
 
-    try:
-        with page.expect_file_chooser(timeout=4_000) as chooser_info:
-            trigger.click()
-        chooser_info.value.set_files(path, timeout=30_000)
-    except TimeoutError:
-        # The editor may open an in-page dialog rather than a native chooser.
-        # The file input is selected only after the article image control was
-        # activated, which keeps cover/attachment inputs out of this path.
-        file_input = _wait_for_image_file_input(page)
+    if context.mode == "native":
+        if context.chooser is None:
+            raise PublisherError(
+                "Uploading Toutiao article image",
+                "Toutiao opened a native image chooser without returning a chooser handle.",
+            )
+        context.chooser.set_files(path, timeout=30_000)  # type: ignore[attr-defined]
+    else:
+        file_input = _wait_for_image_file_input(page, context)
         file_input.set_input_files(path, timeout=30_000)
 
-    _wait_for_upload_complete(page)
-    _confirm_inline_upload(page)
+    _wait_for_upload_started(page, context, editor, before_count)
+    _wait_for_upload_complete(page, context, editor, before_count)
+
+    if context.root is not None:
+        confirm = _find_inline_confirm_control(context.root)
+        if confirm is not None:
+            _select_uploaded_toutiao_image(context)
+            if not _confirm_inline_upload(page, context):
+                raise PublisherError(
+                    "Uploading Toutiao article image",
+                    "Toutiao showed an inline-image confirmation UI but it was not usable.",
+                )
+            _wait_for_inline_upload_closed(page, context)
+
     _wait_for_editor_images(page, editor, before_count + 1)
+    # Upload dialogs can steal focus or restore a stale ProseMirror selection.
+    # Re-establish the caret before the next text/image block is appended.
+    _focus_editor_for_image_insertion(editor)
 
 
 def _inline_image_blocks(
@@ -850,11 +1329,20 @@ def _fill_body_with_inline_images(
     content: PlatformContent,
     blocks: tuple[ContentBlock, ...],
 ) -> None:
+    before_count = _editor_image_count(body)
+    image_blocks = sum(1 for block in blocks if isinstance(block, ImageBlock))
     for block in blocks:
         if isinstance(block, TextBlock):
             _append_rendered_html(body, render_for_platform("toutiao_article", block.text))
         else:
             _insert_image(page, body, content.images[block.index - 1])
+    expected_count = before_count + image_blocks
+    actual_count = _editor_image_count(body)
+    if actual_count != expected_count:
+        raise PublisherError(
+            "Filling Toutiao article content",
+            f"The Toutiao article editor contains {actual_count} images; expected {expected_count} after inline insertion.",
+        )
     if not _inline_text_blocks_are_present(body, blocks):
         raise PublisherError(
             "Filling Toutiao article content",
@@ -882,13 +1370,14 @@ def run_toutiao_article(
     content = post.public_long
 
     controller.step("toutiao_article", "checking_login", "检查登录")
-    _run_step(
+    _run_toutiao_step(
+        page,
         "Checking Toutiao article login",
         lambda: _check_login(page, controller),
     )
 
     controller.step("toutiao_article", "opening_editor", "打开文章创作页")
-    _run_step("Opening Toutiao article editor", lambda: _open_editor(page))
+    _run_toutiao_step(page, "Opening Toutiao article editor", lambda: _open_editor(page))
 
     controller.step("toutiao_article", "filling_content", "填写标题和正文")
     inline_blocks: tuple[ContentBlock, ...] = ()
@@ -905,7 +1394,7 @@ def run_toutiao_article(
         else:
             _fill_body(page, body, content)
 
-    _run_step("Filling Toutiao article title and content", fill_content)
+    _run_toutiao_step(page, "Filling Toutiao article title and content", fill_content)
     if body is None:
         raise PublisherError("Filling Toutiao article content", "Body editor was not retained.")
 
@@ -914,7 +1403,8 @@ def run_toutiao_article(
         "uploading_images",
         f"向正文插入 {len(content.images)} 张图片",
     )
-    _run_step(
+    _run_toutiao_step(
+        page,
         "Uploading Toutiao article images",
         lambda: (
             _fill_body_with_inline_images(page, body, content, inline_blocks)
@@ -929,9 +1419,22 @@ def run_toutiao_article(
 def _insert_images_at_end(page: Page, body: Locator, images: tuple[Path, ...]) -> None:
     """Preserve the public_long no-marker rule: append images in list order."""
 
+    before_count = _editor_image_count(body)
     _focus_editor_for_image_insertion(body)
     for image in images:
         _insert_image(page, body, image)
+    actual_count = _editor_image_count(body)
+    expected_count = before_count + len(images)
+    if actual_count != expected_count:
+        raise PublisherError(
+            "Uploading Toutiao article images",
+            f"The Toutiao article editor contains {actual_count} images; expected {expected_count} after upload.",
+        )
 
 
-__all__ = ["EDITOR_URL", "HOME_URL", "run_toutiao_article"]
+__all__ = [
+    "EDITOR_URL",
+    "HOME_URL",
+    "ToutiaoImageUploadContext",
+    "run_toutiao_article",
+]
