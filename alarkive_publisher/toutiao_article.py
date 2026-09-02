@@ -991,7 +991,52 @@ def _image_file_inputs(
                     inputs.append(candidate)
         except Exception:
             continue
-    return inputs
+
+    # Toutiao's current upload drawer renders two image inputs: the normal
+    # ``.btn-upload-handle`` input, which owns the React ``onChange`` handler,
+    # and ``#upload-drag-input``, which is reserved for drag-and-drop.  Calling
+    # set_input_files() on the latter changes the file list but cannot start an
+    # upload because that input deliberately has no onChange callback.  Keep
+    # the drag-only input out whenever the real upload input is present, and
+    # order the remaining candidates so the caller's ``[-1]`` remains safe.
+    direct_inputs = [
+        candidate
+        for candidate in inputs
+        if candidate.get_attribute("id") != "upload-drag-input"
+    ]
+    if direct_inputs:
+        inputs = direct_inputs
+    return sorted(inputs, key=_image_file_input_priority)
+
+
+def _image_file_input_priority(locator: Locator) -> int:
+    """Prefer a file input with an upload change handler over drag-only input."""
+
+    try:
+        input_id = locator.get_attribute("id") or ""
+        if input_id == "upload-drag-input":
+            return -100
+        ancestor_hint = locator.evaluate(
+            """
+            element => {
+                const parts = [];
+                let current = element;
+                for (let depth = 0; current && depth < 5; depth += 1) {
+                    parts.push(String(current.id || ''));
+                    parts.push(String(current.className || ''));
+                    current = current.parentElement;
+                }
+                return parts.join(' ').toLowerCase();
+            }
+            """
+        )
+        if "btn-upload-handle" in ancestor_hint:
+            return 100
+        if "upload-handler-drag" in ancestor_hint:
+            return -100
+        return 10 if _is_interactable(locator) else 0
+    except Exception:
+        return 0
 
 
 def _wait_for_image_file_input(
@@ -1025,14 +1070,38 @@ def _context_is_busy(page: Page, context: ToutiaoImageUploadContext) -> bool:
         try:
             busy = root.locator(
                 '[aria-busy="true"], [class*="loading"], [class*="uploading"], '
-                '[role="progressbar"]'
+                '[role="progressbar"], .syl-progress-status-active'
             )
             for index in range(busy.count()):
-                if _is_interactable(busy.nth(index)):
-                    return True
+                try:
+                    if busy.nth(index).is_visible():
+                        return True
+                except Exception:
+                    continue
         except Exception:
             continue
     return bool(_INLINE_UPLOAD_ACTIVITY_RE.search(_context_text(page, context)))
+
+
+def _successful_upload_present(context: ToutiaoImageUploadContext) -> bool:
+    """Return whether the opened upload UI has a completed image item."""
+
+    if context.root is None:
+        return False
+    try:
+        # The current Toutiao drawer renders ``.success`` only after the
+        # uploader receives the server response.  A blob preview alone is not
+        # completion: it is rendered before the asynchronous upload starts.
+        success = context.root.locator(
+            '.pic-select-image-item .success, '
+            '[data-upload-status="success"], [data-status="success"]'
+        )
+        for index in range(success.count()):
+            if success.nth(index).is_visible():
+                return True
+    except Exception:
+        return False
+    return False
 
 
 def _raise_if_upload_failed(page: Page, context: ToutiaoImageUploadContext) -> None:
@@ -1041,6 +1110,22 @@ def _raise_if_upload_failed(page: Page, context: ToutiaoImageUploadContext) -> N
             "Uploading Toutiao article image",
             "The Toutiao inline-image UI reported an image upload failure.",
         )
+    if context.root is not None:
+        try:
+            failed = context.root.locator(
+                '.pic-select-image-item .error, '
+                '[data-upload-status="error"], [data-status="error"]'
+            )
+            for index in range(failed.count()):
+                if failed.nth(index).is_visible():
+                    raise PublisherError(
+                        "Uploading Toutiao article image",
+                        "The Toutiao inline-image UI reported an image upload failure.",
+                    )
+        except PublisherError:
+            raise
+        except Exception:
+            pass
 
 
 def _wait_for_upload_started(
@@ -1082,7 +1167,7 @@ def _wait_for_upload_complete(
     while time.monotonic() < deadline:
         _raise_if_upload_failed(page, context)
         image_inserted = editor is not None and _editor_image_count(editor) > before_count
-        ready_thumbnail = _new_thumbnail_present(context)
+        ready_thumbnail = _successful_upload_present(context)
         success_text = bool(re.search(r"上传成功|已完成|ready|success", _context_text(page, context), re.I))
         ready = image_inserted or ready_thumbnail or success_text
         if ready and not _context_is_busy(page, context):

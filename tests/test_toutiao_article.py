@@ -197,11 +197,16 @@ class ToutiaoArticleRoutingTests(unittest.TestCase):
 
     def test_image_input_is_scoped_to_open_inline_upload_context(self) -> None:
         class Input:
-            def __init__(self, accept: str) -> None:
+            def __init__(self, accept: str, input_id: str | None = None) -> None:
                 self.accept = accept
+                self.input_id = input_id
 
             def get_attribute(self, name: str) -> str | None:
-                return self.accept if name == "accept" else None
+                if name == "accept":
+                    return self.accept
+                if name == "id":
+                    return self.input_id
+                return None
 
         class Collection:
             def __init__(self, values: list[Input]) -> None:
@@ -215,7 +220,12 @@ class ToutiaoArticleRoutingTests(unittest.TestCase):
 
         class Root:
             def __init__(self) -> None:
-                self.inputs = Collection([Input("image/png")])
+                self.inputs = Collection(
+                    [
+                        Input("image/png", "upload-drag-input"),
+                        Input("image/png", "article-upload-input"),
+                    ]
+                )
 
             def locator(self, selector: str) -> Collection:
                 self.selector = selector
@@ -227,7 +237,45 @@ class ToutiaoArticleRoutingTests(unittest.TestCase):
         )
         inputs = _image_file_inputs(object(), context)  # type: ignore[arg-type]
         self.assertEqual(len(inputs), 1)
-        self.assertIs(inputs[0], root.inputs.values[0])
+        self.assertIs(inputs[0], root.inputs.values[1])
+
+    def test_image_input_prefers_toutiao_change_handler_over_drag_input(self) -> None:
+        class Input:
+            def __init__(self, input_id: str) -> None:
+                self.input_id = input_id
+
+            def get_attribute(self, name: str) -> str | None:
+                if name == "accept":
+                    return "image/*"
+                if name == "id":
+                    return self.input_id
+                return None
+
+        class Collection:
+            def __init__(self, values: list[Input]) -> None:
+                self.values = values
+
+            def count(self) -> int:
+                return len(self.values)
+
+            def nth(self, index: int) -> Input:
+                return self.values[index]
+
+        class Root:
+            def __init__(self) -> None:
+                self.inputs = Collection(
+                    [Input("upload-drag-input"), Input("normal-upload-input")]
+                )
+
+            def locator(self, selector: str) -> Collection:
+                del selector
+                return self.inputs
+
+        context = ToutiaoImageUploadContext(
+            frame=object(), root=Root(), mode="drawer"  # type: ignore[arg-type]
+        )
+        inputs = _image_file_inputs(object(), context)  # type: ignore[arg-type]
+        self.assertEqual([item.get_attribute("id") for item in inputs], ["normal-upload-input"])
 
     def test_upload_start_does_not_accept_first_idle_observation(self) -> None:
         class Page:
@@ -276,11 +324,11 @@ class ToutiaoArticleRoutingTests(unittest.TestCase):
             "alarkive_publisher.toutiao_article._context_is_busy",
             side_effect=[False, False],
         ), patch(
-            "alarkive_publisher.toutiao_article._new_thumbnail_present",
+            "alarkive_publisher.toutiao_article._successful_upload_present",
             side_effect=[False, False, True, True],
         ), patch(
             "alarkive_publisher.toutiao_article._context_text",
-            return_value="上传中",
+            return_value="",
         ):
             _wait_for_upload_complete(page, context, object(), 0, timeout=1_000)  # type: ignore[arg-type]
 
