@@ -9,12 +9,8 @@
     </div>
 </div>
 
-{% if post.action_error %}
-<div class="alert alert-error" role="alert">{{ post.action_error }}</div>
-{% endif %}
-
+{% if post.action_error %}<div class="alert alert-error" role="alert">{{ post.action_error }}</div>{% endif %}
 {% set publish_state = post.publish_state %}
-{% set has_full_workflow = 'baijiahao' in post.manifest['platforms'] or 'wechat' in post.manifest['platforms'] %}
 <section
     class="detail-section publish-section"
     id="publish-panel"
@@ -24,15 +20,12 @@
     data-reset-url="{{ url_for('mark_unpublished_post', post_id=post.id) }}"
     data-close-url="{{ url_for('close_publish_browser', post_id=post.id) }}"
     data-browser-open="{{ 'true' if post.browser_open else 'false' }}"
-    data-full-workflow-available="{{ 'true' if has_full_workflow else 'false' }}"
-    data-full-workflow-platforms="{% if 'baijiahao' in post.manifest['platforms'] %}baijiahao{% endif %}{% if 'baijiahao' in post.manifest['platforms'] and 'wechat' in post.manifest['platforms'] %},{% endif %}{% if 'wechat' in post.manifest['platforms'] %}wechat{% endif %}"
+    data-full-workflow-available="{{ 'true' if post.has_available_publisher else 'false' }}"
+    data-full-workflow-targets="{{ post.full_workflow_targets | join(',') }}"
     data-state-url="{{ url_for('publish_state_api', post_id=post.id) }}"
 >
     <div class="section-heading">
-        <div>
-            <p class="eyebrow">PUBLISHER</p>
-            <h2>发布状态</h2>
-        </div>
+        <div><p class="eyebrow">PUBLISHER</p><h2>发布状态</h2></div>
         <span class="live-note">状态每秒更新</span>
     </div>
     <div class="publish-summary">
@@ -40,111 +33,83 @@
             <span class="status-badge {% if publish_state.published %}status-published{% else %}status-unpublished{% endif %}" id="content-published-status">
                 {% if publish_state.published %}✓ 已发布{% else %}● 未发布{% endif %}
             </span>
-            <p class="published-at" id="published-at">
-                {% if publish_state.published_at %}{{ publish_state.published_at }}{% endif %}
-            </p>
+            <p class="published-at" id="published-at">{% if publish_state.published %}{{ publish_state.published_at }}{% endif %}</p>
         </div>
         <div class="publish-actions" id="publish-actions">
             {% if not publish_state.published and post.browser_open and publish_state.workflow.status == 'failed' %}
-            <form method="post" action="{{ url_for('close_publish_browser', post_id=post.id) }}">
-                <button class="button button-secondary" type="submit">关闭浏览器</button>
-            </form>
+            <form method="post" action="{{ url_for('close_publish_browser', post_id=post.id) }}"><button class="button button-secondary" type="submit">关闭浏览器</button></form>
             {% elif post.publisher_active %}
-            {% if publish_state.published %}
-            <form method="post" action="{{ url_for('mark_unpublished_post', post_id=post.id) }}" onsubmit="return confirm('仅将 Alarkive 中的状态改为“未发布”。不会撤回平台内容，也不会操作浏览器。');">
-                <button class="button button-secondary" type="submit">重新置为未发布</button>
-            </form>
-            {% endif %}
+            {% if publish_state.published %}<form method="post" action="{{ url_for('mark_unpublished_post', post_id=post.id) }}"><button class="button button-secondary" type="submit">重新置为未发布</button></form>{% endif %}
             <span class="workflow-action-note">发布流程进行中</span>
-            {% if post.browser_open and publish_state.workflow.status == 'failed' %}
-            <form method="post" action="{{ url_for('close_publish_browser', post_id=post.id) }}">
-                <button class="button button-secondary" type="submit">关闭浏览器</button>
-            </form>
-            {% endif %}
             {% elif publish_state.published %}
-            <form method="post" action="{{ url_for('mark_unpublished_post', post_id=post.id) }}" onsubmit="return confirm('仅将 Alarkive 中的状态改为“未发布”。不会撤回平台内容，也不会操作浏览器。');">
-                <button class="button button-secondary" type="submit">重新置为未发布</button>
-            </form>
-            {% else %}
-            {% if has_full_workflow %}
-            <form method="post" action="{{ url_for('publish_post', post_id=post.id) }}" onsubmit="return confirm('开始准备当前任务中的已有平台？\n\nAlarkive 不会点击平台真正的发布按钮。');">
-                <button class="button button-secondary" type="submit">发布全部</button>
-            </form>
-            {% else %}
-            <span class="workflow-action-note">当前任务没有可用于完整发布流程的平台内容</span>
-            {% endif %}
-            {% endif %}
+            <form method="post" action="{{ url_for('mark_unpublished_post', post_id=post.id) }}"><button class="button button-secondary" type="submit">重新置为未发布</button></form>
+            {% elif post.has_available_publisher %}
+            <form method="post" action="{{ url_for('publish_post', post_id=post.id) }}" onsubmit="return confirm('开始准备当前任务中已有且已接入的发布平台？\n\nAlarkive 不会点击平台真正的发布按钮。');"><button class="button button-secondary" type="submit">发布全部</button></form>
+            {% else %}<span class="workflow-action-note">当前任务包含内容，但没有已接入的可发布平台</span>{% endif %}
         </div>
     </div>
 
     <div class="workflow-block" aria-live="polite">
         <div class="workflow-heading">
-            <h3>发布准备流程{% if publish_state.workflow.workflow_mode == 'single' %} · 单平台：{{ {'xiaohongshu': '小红书', 'baijiahao': '百家号', 'wechat': '微信公众号'}[publish_state.workflow.target_platform] }}{% endif %}</h3>
+            <h3>发布准备流程{% if publish_state.workflow.workflow_mode == 'single' %} · 单平台：{{ {'baijiahao': '百家号', 'wechat_image': '微信图文'}[publish_state.workflow.target_platform] }}{% endif %}</h3>
             <span id="workflow-status">{{ publish_state.workflow.status }}</span>
         </div>
         <div class="workflow-platforms" id="workflow-platforms">
-            {% for key, label in [('xiaohongshu', '小红书'), ('baijiahao', '百家号'), ('wechat', '微信公众号')] %}
+            {% for target in post.publish_targets %}
             <div class="workflow-platform">
-                <span>{{ label }}</span>
-                <span data-platform-status="{{ key }}" data-platform-available="{{ 'true' if key in post.manifest['platforms'] else 'false' }}">{% if key in post.manifest['platforms'] %}{{ publish_state.workflow.platforms[key].status }}{% else %}无内容{% endif %}</span>
+                <span>{{ target.label }}</span>
+                <span data-platform-status="{{ target.target }}" data-platform-available="{{ 'true' if target.has_content else 'false' }}" data-platform-implemented="{{ 'true' if target.implemented else 'false' }}">
+                    {% if not target.has_content %}无内容{% elif not target.implemented %}待接入{% else %}{{ publish_state.workflow.platforms[target.target].status }}{% endif %}
+                </span>
             </div>
             {% endfor %}
         </div>
         <p class="workflow-message" id="workflow-message">{{ publish_state.workflow.message or '' }}</p>
-        <p class="workflow-error" id="workflow-error">
-            {% if publish_state.workflow.error %}{{ publish_state.workflow.error.message }}{% endif %}
-        </p>
+        <p class="workflow-error" id="workflow-error">{% if publish_state.workflow.error %}{{ publish_state.workflow.error.message }}{% endif %}</p>
         <div id="workflow-continue">
             {% if publish_state.workflow.status == 'waiting' %}
-            <form method="post" action="{{ url_for('continue_publish', post_id=post.id) }}">
-                <button class="button button-primary" type="submit">
-                    {% if publish_state.workflow.current_step == 'ready' and (publish_state.workflow.workflow_mode == 'single' or publish_state.workflow.current_platform == 'wechat' or (publish_state.workflow.current_platform == 'baijiahao' and 'wechat' not in post.manifest['platforms'])) %}结束流程并关闭浏览器{% elif publish_state.workflow.current_platform == 'xiaohongshu' %}继续到百家号{% elif publish_state.workflow.current_platform == 'baijiahao' %}继续到微信公众号{% else %}继续{% endif %}
-                </button>
-            </form>
+            <form method="post" action="{{ url_for('continue_publish', post_id=post.id) }}"><button class="button button-primary" type="submit">继续</button></form>
             {% endif %}
         </div>
     </div>
-    <p class="publisher-note">Alarkive v0.1.8 只准备任务中已有平台的内容，不会点击小红书、百家号或微信公众号的最终“发布/发表/群发”按钮。如需真正发布，请在浏览器中手工操作。单平台流程完成后请点击“结束流程并关闭浏览器”；完整流程会跳过任务中没有内容的平台。</p>
+    <p class="publisher-note">Alarkive v0.2.0 只准备当前任务中存在且已接入 Publisher 的内容，不会点击平台最终的“发布/发表/群发”按钮。未接入的平台显示“待接入”，没有对应 Content Variant 的平台显示“无内容”。</p>
 </section>
 
 <section class="detail-section">
-    <div class="section-heading">
-        <div>
-            <p class="eyebrow">MEDIA</p>
-            <h2>图片（{{ post.images | length }}）</h2>
-        </div>
-    </div>
+    <div class="section-heading"><div><p class="eyebrow">MEDIA</p><h2>图片（{{ post.images | length }}）</h2></div></div>
     <div class="detail-image-grid">
         {% for image in post.images %}
-        <figure class="detail-image-card">
-            <img src="{{ url_for('image_file', post_id=post.id, image_name=image.filename) }}" alt="{{ image.filename }}">
-            <figcaption>{{ image.filename }}</figcaption>
-        </figure>
+        <figure class="detail-image-card"><img src="{{ url_for('image_file', post_id=post.id, image_name=image.filename) }}" alt="{{ image.filename }}"><figcaption>{{ image.filename }}</figcaption></figure>
         {% endfor %}
     </div>
 </section>
 
 <section class="detail-section">
-    <div class="section-heading">
-        <div>
-            <p class="eyebrow">PLATFORMS</p>
-            <h2>平台内容</h2>
-        </div>
-    </div>
+    <div class="section-heading"><div><p class="eyebrow">CONTENT VARIANTS</p><h2>内容模块</h2></div></div>
     <div class="detail-platforms">
-        {% for platform in post.platform_contents %}
+        {% for variant in post.variant_contents %}
         <article class="detail-platform">
-            <h3>{{ platform.label }}</h3>
-            <h4>{{ platform.title }}</h4>
-            <pre>{{ platform.body }}</pre>
-            <div class="platform-publish-action" data-platform-action="{{ platform.key }}" data-publish-url="{{ url_for('publish_platform', post_id=post.id, platform=platform.key) }}">
-                {% if post.publisher_active %}
-                <span class="workflow-action-note">发布流程进行中</span>
-                {% else %}
-                <form method="post" action="{{ url_for('publish_platform', post_id=post.id, platform=platform.key) }}" onsubmit="return confirm('开始准备{{ platform.label }}内容？\n\nAlarkive 不会点击平台真正的发布按钮。');">
-                    <button class="button button-primary" type="submit">发布{% if platform.key == 'wechat' %}小绿书{% else %}{{ platform.label }}{% endif %}</button>
-                </form>
-                {% endif %}
+            <h3>{{ variant.label }}</h3>
+            <h4>{{ variant.title }}</h4>
+            <pre>{{ variant.body }}</pre>
+        </article>
+        {% endfor %}
+    </div>
+</section>
+
+<section class="detail-section">
+    <div class="section-heading"><div><p class="eyebrow">PLATFORM TARGETS</p><h2>发布渠道</h2></div></div>
+    <div class="detail-platforms">
+        {% for target in post.publish_targets %}
+        <article class="detail-platform target-card">
+            <h3>{{ target.label }}</h3>
+            <p class="muted">{{ {'available': '可发布', 'not_implemented': '待接入', 'no_content': '无内容'}[target.status] }}</p>
+            <div class="platform-publish-action" data-platform-action="{{ target.target }}" data-content-available="{{ 'true' if target.has_content else 'false' }}" data-platform-implemented="{{ 'true' if target.implemented else 'false' }}" data-publish-url="{{ url_for('publish_platform', post_id=post.id, platform=target.target) }}">
+                {% if target.status == 'available' and not post.publisher_active %}
+                <form method="post" action="{{ url_for('publish_platform', post_id=post.id, platform=target.target) }}" onsubmit="return confirm('开始准备{{ target.label }}内容？\n\nAlarkive 不会点击平台真正的发布按钮。');"><button class="button button-primary" type="submit">发布{{ target.label }}</button></form>
+                {% elif target.status == 'available' and post.publisher_active %}<span class="workflow-action-note">发布流程进行中</span>
+                {% elif target.status == 'not_implemented' %}<span class="workflow-action-note">Publisher 待接入</span>
+                {% else %}<span class="workflow-action-note">未准备内容</span>{% endif %}
             </div>
         </article>
         {% endfor %}

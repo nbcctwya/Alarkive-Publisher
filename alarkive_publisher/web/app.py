@@ -81,21 +81,25 @@ def _render_detail_error(
 
 def _form_values(
     name: str,
-    xiaohongshu_title: str,
-    xiaohongshu_body: str,
-    baijiahao_title: str,
-    baijiahao_body: str,
-    wechat_title: str,
-    wechat_body: str,
+    public_long_title: str,
+    public_long_body: str,
+    wechat_long_title: str,
+    wechat_long_body: str,
+    wechat_short_title: str,
+    wechat_short_body: str,
+    toutiao_short_title: str,
+    toutiao_short_body: str,
 ) -> dict[str, str]:
     return {
         "name": name,
-        "xiaohongshu_title": xiaohongshu_title,
-        "xiaohongshu_body": xiaohongshu_body,
-        "baijiahao_title": baijiahao_title,
-        "baijiahao_body": baijiahao_body,
-        "wechat_title": wechat_title,
-        "wechat_body": wechat_body,
+        "public_long_title": public_long_title,
+        "public_long_body": public_long_body,
+        "wechat_long_title": wechat_long_title,
+        "wechat_long_body": wechat_long_body,
+        "wechat_short_title": wechat_short_title,
+        "wechat_short_body": wechat_short_body,
+        "toutiao_short_title": toutiao_short_title,
+        "toutiao_short_body": toutiao_short_body,
     }
 
 
@@ -147,22 +151,26 @@ async def new_post(request: Request) -> HTMLResponse:
 async def create_post(
     request: Request,
     name: str = Form(default=""),
-    xiaohongshu_title: str = Form(default=""),
-    xiaohongshu_body: str = Form(default=""),
-    baijiahao_title: str = Form(default=""),
-    baijiahao_body: str = Form(default=""),
-    wechat_title: str = Form(default=""),
-    wechat_body: str = Form(default=""),
+    public_long_title: str = Form(default=""),
+    public_long_body: str = Form(default=""),
+    wechat_long_title: str = Form(default=""),
+    wechat_long_body: str = Form(default=""),
+    wechat_short_title: str = Form(default=""),
+    wechat_short_body: str = Form(default=""),
+    toutiao_short_title: str = Form(default=""),
+    toutiao_short_body: str = Form(default=""),
     images: list[UploadFile] | None = File(default=None),
 ) -> Response:
     form = _form_values(
         name,
-        xiaohongshu_title,
-        xiaohongshu_body,
-        baijiahao_title,
-        baijiahao_body,
-        wechat_title,
-        wechat_body,
+        public_long_title,
+        public_long_body,
+        wechat_long_title,
+        wechat_long_body,
+        wechat_short_title,
+        wechat_short_body,
+        toutiao_short_title,
+        toutiao_short_body,
     )
     uploaded = [image for image in (images or []) if image.filename]
     try:
@@ -217,14 +225,16 @@ async def create_post(
         saved = save_post(
             name=name,
             titles={
-                "xiaohongshu": xiaohongshu_title,
-                "baijiahao": baijiahao_title,
-                "wechat": wechat_title,
+                "public_long": public_long_title,
+                "wechat_long": wechat_long_title,
+                "wechat_short": wechat_short_title,
+                "toutiao_short": toutiao_short_title,
             },
             bodies={
-                "xiaohongshu": xiaohongshu_body,
-                "baijiahao": baijiahao_body,
-                "wechat": wechat_body,
+                "public_long": public_long_body,
+                "wechat_long": wechat_long_body,
+                "wechat_short": wechat_short_body,
+                "toutiao_short": toutiao_short_body,
             },
             images=image_data,
         )

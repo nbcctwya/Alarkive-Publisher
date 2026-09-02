@@ -514,16 +514,16 @@ def run_wechat(
     controller.step(
         "wechat",
         "uploading_images",
-        f"上传 {len(post.wechat.images)} 张图片",
+        f"上传 {len(post.wechat_short.images)} 张图片",
     )
     _run_step(
         "Uploading WeChat images",
-        lambda: _upload_images(editor, post.wechat.images),
+        lambda: _upload_images(editor, post.wechat_short.images),
     )
 
     controller.step("wechat", "filling_content", "填写标题和正文")
     _run_step(
         "Filling WeChat title and content",
-        lambda: _fill_text(editor, post.wechat),
+        lambda: _fill_text(editor, post.wechat_short),
     )
     return editor

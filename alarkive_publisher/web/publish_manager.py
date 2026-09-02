@@ -7,9 +7,15 @@ from pathlib import Path
 from typing import Callable, cast
 
 from ..content import PostContent, load_post
+from ..routing import (
+    AVAILABLE_PUBLISHERS,
+    PUBLISHER_REGISTRY,
+    PUBLISH_TARGETS,
+    WORKFLOW_TARGETS,
+    normalize_target,
+)
 from ..workflow_controller import WebWorkflowController
 from .publish_state import (
-    PLATFORMS,
     initialize_workflow,
     load_publish_state,
     mark_interrupted,
@@ -133,11 +139,17 @@ class PublishManager:
     def start_platform_publish(self, post_id: str, platform: str) -> dict:
         """Start a non-blocking workflow for exactly one supported platform."""
 
-        if platform not in PLATFORMS:
-            supported = "、".join(PLATFORMS)
+        if platform == "xiaohongshu":
+            raise PublisherUnsupportedPlatformError("小红书已从 Web 发布入口移除。")
+        platform = normalize_target(platform)
+        spec = PUBLISHER_REGISTRY.get(platform)
+        if spec is None:
+            supported = "、".join(PUBLISH_TARGETS)
             raise PublisherUnsupportedPlatformError(
                 f"不支持的平台：{platform}。可选平台：{supported}。"
             )
+        if platform not in AVAILABLE_PUBLISHERS:
+            raise PublisherUnsupportedPlatformError("该平台 Publisher 尚未接入。")
         return self._start_workflow(
             post_id,
             workflow_mode="single",
@@ -168,21 +180,28 @@ class PublishManager:
             # Validate the immutable Package before changing the local marker.
             post = load_post(post_folder)
             if workflow_mode == "all" and not any(
-                post.has_platform(platform) for platform in ("baijiahao", "wechat")
+                post.has_content(PUBLISHER_REGISTRY[target].variant)
+                for target in WORKFLOW_TARGETS
+                if target in AVAILABLE_PUBLISHERS
             ):
                 raise PublisherUnsupportedPlatformError(
-                    "当前任务没有可用于完整发布流程的平台内容（百家号或微信公众号）。"
+                    "当前任务包含内容，但没有已接入的可发布平台。"
+                    "没有可用于完整发布流程的平台内容。"
                 )
-            if target_platform is not None and not post.has_platform(target_platform):
-                platform_labels = {
-                    "xiaohongshu": "小红书",
-                    "baijiahao": "百家号",
-                    "wechat": "微信公众号",
-                }
-                raise PublisherUnsupportedPlatformError(
-                    f"当前任务不包含{platform_labels.get(target_platform, target_platform)}内容，"
-                    "无法启动单平台发布。"
-                )
+            if target_platform is not None:
+                target_platform = normalize_target(target_platform)
+                spec = PUBLISHER_REGISTRY.get(target_platform)
+                if spec is None or target_platform not in AVAILABLE_PUBLISHERS:
+                    raise PublisherUnsupportedPlatformError("该平台 Publisher 尚未接入。")
+                if not post.has_content(spec.variant):
+                    platform_labels = {
+                        "baijiahao": "百家号",
+                        "wechat_image": "微信图文",
+                    }
+                    label = platform_labels.get(target_platform, spec.label)
+                    raise PublisherUnsupportedPlatformError(
+                        f"当前任务不包含{label}所需内容，无法启动单平台发布。"
+                    )
             current = load_publish_state(post_folder)
             if mark_local_published and current["published"]:
                 raise PublisherAlreadyPublishedError(

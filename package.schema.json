@@ -1,20 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "package.schema.json",
-  "title": "Alarkive Package v0.1 manifest",
-  "description": "The manifest.json format for an Alarkive Package v0.1.",
+  "title": "Alarkive Package v0.2 manifest",
+  "description": "The current manifest.json format for an Alarkive Package v0.2.",
   "type": "object",
-  "required": [
-    "schema_version",
-    "id",
-    "name",
-    "created_at",
-    "platforms"
-  ],
+  "required": ["schema_version", "id", "name", "created_at", "content"],
+  "additionalProperties": false,
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "0.1",
+      "const": "0.2",
       "description": "The Alarkive Package schema version."
     },
     "id": {
@@ -33,43 +28,35 @@
       "format": "date-time",
       "description": "RFC 3339/ISO 8601 creation time with a timezone offset or Z."
     },
-    "platforms": {
+    "content": {
       "type": "object",
       "minProperties": 1,
-      "properties": {
-        "xiaohongshu": {
-          "$ref": "#/$defs/platform"
-        },
-        "baijiahao": {
-          "$ref": "#/$defs/platform"
-        },
-        "wechat": {
-          "$ref": "#/$defs/platform"
-        }
-      },
       "additionalProperties": false,
-      "description": "Platform-specific content and ordered image references."
+      "properties": {
+        "public_long": {"$ref": "#/$defs/content_variant"},
+        "wechat_long": {"$ref": "#/$defs/content_variant"},
+        "wechat_short": {"$ref": "#/$defs/content_variant"},
+        "toutiao_short": {"$ref": "#/$defs/content_variant"}
+      },
+      "description": "One or more saved Content Variants."
     }
   },
   "$defs": {
-    "platform": {
+    "content_variant": {
       "type": "object",
-      "required": [
-        "title",
-        "content_file",
-        "images"
-      ],
+      "required": ["title", "content_file", "images"],
+      "additionalProperties": false,
       "properties": {
         "title": {
           "type": "string",
           "minLength": 1,
           "pattern": "[^\\s]",
-          "description": "Platform title. Leading and trailing whitespace is removed by the Web writer."
+          "description": "Non-empty Content Variant title."
         },
         "content_file": {
           "type": "string",
           "pattern": "^content/(?!\\.{1,2}(?:/|$))[^/\\\\]+(?:/(?!\\.{1,2}(?:/|$))[^/\\\\]+)*$",
-          "description": "Package-relative path to the platform's UTF-8 Markdown content."
+          "description": "Package-relative path to the variant's UTF-8 Markdown content."
         },
         "images": {
           "type": "array",
@@ -82,7 +69,7 @@
           "description": "Non-empty, ordered list of package-relative PNG paths."
         }
       },
-      "description": "Content metadata for one supported platform."
+      "description": "Metadata for one Content Variant."
     }
   }
 }

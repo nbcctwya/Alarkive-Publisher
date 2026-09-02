@@ -132,9 +132,9 @@ class PublishManagerTests(unittest.TestCase):
                 controller.completed(f"{platform} 完成")
 
             manager = PublishManager(root, platform_workflow_runner=fake_platform_runner)
-            manager.start_platform_publish(package.name, "xiaohongshu")
-            wait_for(lambda: not manager.has_active_workflow())
-
+            with self.assertRaisesRegex(PublisherUnsupportedPlatformError, "从 Web 发布入口移除"):
+                manager.start_platform_publish(package.name, "xiaohongshu")
+            self.assertFalse(manager.has_active_workflow())
             state = manager.get_publish_state(package.name)
             self.assertTrue(state["published"])
             self.assertIsNotNone(state["published_at"])
@@ -162,7 +162,7 @@ class PublishManagerTests(unittest.TestCase):
             ).directory
             manager = PublishManager(root, workflow_runner=lambda *args: None)
 
-            with self.assertRaisesRegex(PublisherUnsupportedPlatformError, "不包含微信公众号"):
+            with self.assertRaisesRegex(PublisherUnsupportedPlatformError, "不包含微信图文"):
                 manager.start_platform_publish(package.name, "wechat")
             self.assertFalse(manager.has_active_workflow())
 

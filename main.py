@@ -6,7 +6,8 @@ import traceback
 from pathlib import Path
 
 from alarkive_publisher import __version__
-from alarkive_publisher.content import ContentError, load_post
+from alarkive_publisher.content import CONTENT_VARIANTS, ContentError, load_post
+from alarkive_publisher.routing import CONTENT_VARIANT_LABELS
 
 
 VERSION = f"v{__version__}"
@@ -24,7 +25,7 @@ def _configure_output_encoding() -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Fill the available Baijiahao and WeChat image posts in order, "
+            "Prepare the available publishers for an Alarkive Package, "
             "then stop before publishing."
         )
     )
@@ -39,7 +40,7 @@ def main() -> int:
 
     print(f"Alarkive Publisher {VERSION}")
     print()
-    print("[1/17] Loading Alarkive Package...")
+    print("[1] Loading Alarkive Package...")
 
     try:
         post = load_post(post_folder)
@@ -60,15 +61,11 @@ def main() -> int:
     print("Package folder:")
     print(post.folder)
     print()
-    for platform, label in (
-        ("xiaohongshu", "Xiaohongshu"),
-        ("baijiahao", "Baijiahao"),
-        ("wechat", "WeChat"),
-    ):
-        content = getattr(post, platform)
+    for variant in CONTENT_VARIANTS:
+        content = getattr(post, variant)
         if content is None:
             continue
-        print(label)
+        print(CONTENT_VARIANT_LABELS[variant])
         print("Title:")
         print(content.title)
         print()
@@ -102,7 +99,7 @@ def main() -> int:
         browser.update(playwright=playwright, context=context, page=page)
 
     try:
-        print("[2/17] Starting browser...")
+        print("[2] Starting browser...")
         run_publisher_workflow(
             post,
             project_root,

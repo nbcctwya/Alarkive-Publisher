@@ -4,6 +4,7 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
+from .routing import PUBLISHER_REGISTRY, normalize_target
 from .web.publish_state import update_workflow
 
 
@@ -11,6 +12,7 @@ PLATFORM_LABELS = {
     "xiaohongshu": "小红书",
     "baijiahao": "百家号",
     "wechat": "微信公众号",
+    **{target: spec.label for target, spec in PUBLISHER_REGISTRY.items()},
 }
 
 
@@ -59,11 +61,11 @@ class CLIWorkflowController(WorkflowController):
 
     def start_platform(self, platform: str) -> None:
         print()
-        print(f"--- {PLATFORM_LABELS.get(platform, platform)} ---")
+        print(f"--- {PLATFORM_LABELS.get(normalize_target(platform), platform)} ---")
         print()
 
     def step(self, platform: str, step: str, message: str) -> None:
-        print(f"{PLATFORM_LABELS.get(platform, platform)}: {message}...")
+        print(f"{PLATFORM_LABELS.get(normalize_target(platform), platform)}: {message}...")
 
     def wait_for_user(
         self,

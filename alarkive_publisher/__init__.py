@@ -1,3 +1,3 @@
-"""Alarkive Publisher v0.1.8."""
+"""Alarkive Publisher v0.2.0."""
 
-__version__ = "0.1.8"
+__version__ = "0.2.0"

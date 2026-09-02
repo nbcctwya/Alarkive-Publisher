@@ -5,20 +5,38 @@ from typing import Callable
 
 from .baijiahao import run_baijiahao
 from .content import PostContent
+from .routing import (
+    AVAILABLE_PUBLISHERS,
+    PUBLISHER_REGISTRY,
+    PUBLISH_TARGETS,
+    WORKFLOW_TARGETS,
+    normalize_target,
+)
 from .wechat import run_wechat
 from .workflow_controller import WorkflowController
 from .xiaohongshu import PublisherError, run_xiaohongshu, start_browser
 
 
 BrowserStarted = Callable[[object, object, object], None]
-SINGLE_PLATFORM_TARGETS = ("xiaohongshu", "baijiahao", "wechat")
-FULL_WORKFLOW_TARGETS = ("baijiahao", "wechat")
+FULL_WORKFLOW_TARGETS = WORKFLOW_TARGETS
+# xiaohongshu remains a legacy direct-run target for old integrations. It is
+# deliberately absent from the v0.2 registry and from all Web UI choices.
+SINGLE_PLATFORM_TARGETS = PUBLISH_TARGETS + ("xiaohongshu",)
 
 
-def _post_has_platform(post: PostContent, platform: str) -> bool:
-    """Read platform availability from the Package content model."""
+def _target_has_content(post: PostContent, target: str) -> bool:
+    if target == "xiaohongshu":
+        return post.xiaohongshu is not None
+    spec = PUBLISHER_REGISTRY.get(normalize_target(target))
+    return spec is not None and post.has_content(spec.variant)
 
-    return post.has_platform(platform)
+
+def _available_workflow_targets(post: PostContent) -> list[str]:
+    return [
+        target
+        for target in FULL_WORKFLOW_TARGETS
+        if target in AVAILABLE_PUBLISHERS and _target_has_content(post, target)
+    ]
 
 
 def run_publisher_workflow(
@@ -28,26 +46,23 @@ def run_publisher_workflow(
     *,
     on_browser_started: BrowserStarted | None = None,
 ) -> None:
-    """Run the shared Baijiahao and WeChat publishers that are present.
+    """Run all present targets with an implemented Publisher.
 
-    The workflow deliberately stops at each platform's ready-to-publish page.
-    No function in this orchestration clicks a platform's final publish button.
+    Routing may describe targets that have no runner yet. Those targets are
+    intentionally ignored by this executable workflow.
     """
 
-    active_platforms = [
-        platform
-        for platform in FULL_WORKFLOW_TARGETS
-        if _post_has_platform(post, platform)
-    ]
-    if not active_platforms:
+    active_targets = _available_workflow_targets(post)
+    if not active_targets:
         raise ValueError(
-            "当前 Package 没有可用于完整发布流程的百家号或微信公众号内容。"
+            "当前任务包含内容，但没有已接入的可发布平台。"
+            "没有可用于完整发布流程的平台内容。"
         )
 
     playwright = None
     context = None
     page = None
-    current_platform: str | None = None
+    current_target: str | None = None
     current_step = "Starting browser"
 
     try:
@@ -56,23 +71,25 @@ def run_publisher_workflow(
         if on_browser_started is not None:
             on_browser_started(playwright, context, page)
 
-        for index, platform in enumerate(active_platforms):
-            current_platform = platform
-            current_step = f"Preparing {platform}"
-            controller.start_platform(current_platform)
-            if platform == "baijiahao":
+        for index, target in enumerate(active_targets):
+            current_target = target
+            current_step = f"Preparing {target}"
+            controller.start_platform(target)
+            if target == "baijiahao":
                 run_baijiahao(page, post, controller)
                 ready_message = "百家号已准备完成"
-            else:
+            elif target == "wechat_image":
                 page = run_wechat(page, post, controller)
-                ready_message = "微信公众号已准备完成"
-            is_last = index == len(active_platforms) - 1
+                ready_message = "微信图文已准备完成"
+            else:  # Defensive: registry filtering should make this unreachable.
+                raise ValueError(f"该平台 Publisher 尚未接入：{target}")
+            is_last = index == len(active_targets) - 1
             prompt = (
                 "检查完成后点击结束流程并关闭浏览器。"
                 if is_last
-                else "检查完成后点击继续到微信公众号。"
+                else "检查完成后点击继续到下一个发布平台。"
             )
-            controller.ready(current_platform, ready_message, prompt)
+            controller.ready(target, ready_message, prompt)
 
         current_step = "Closing browser"
         if context is not None:
@@ -80,8 +97,7 @@ def run_publisher_workflow(
         if playwright is not None:
             playwright.stop()
         prepared_names = "、".join(
-            "百家号" if platform == "baijiahao" else "微信公众号"
-            for platform in active_platforms
+            PUBLISHER_REGISTRY[target].label for target in active_targets
         )
         controller.completed(
             f"发布准备流程完成。{prepared_names}已停在最终发布按钮之前。"
@@ -89,10 +105,8 @@ def run_publisher_workflow(
     except BaseException as exc:
         error_step = getattr(exc, "step", current_step)
         try:
-            controller.failed(current_platform, error_step, exc)
+            controller.failed(current_target, error_step, exc)
         except Exception:
-            # The original exception remains the useful failure; state-write
-            # errors should not hide it from the CLI or worker log.
             pass
         raise
 
@@ -105,19 +119,23 @@ def run_single_platform_workflow(
     *,
     on_browser_started: BrowserStarted | None = None,
 ) -> None:
-    """Prepare exactly one platform in its own shared-browser session.
+    """Prepare one implemented target in a shared-browser session."""
 
-    This is intentionally a sibling of ``run_publisher_workflow``. It reuses
-    the existing platform runners for targeted runs.
-    """
-
-    if platform not in SINGLE_PLATFORM_TARGETS:
-        raise ValueError(
-            f"Unsupported single-platform workflow target: {platform!r}. "
-            f"Expected one of {', '.join(SINGLE_PLATFORM_TARGETS)}."
-        )
-    if not _post_has_platform(post, platform):
-        raise ValueError(f"当前 Package 不包含 {platform} 平台内容。")
+    if platform == "xiaohongshu":
+        if not _target_has_content(post, platform):
+            raise ValueError("当前 Package 不包含小红书内容。")
+        target = platform
+    else:
+        target = normalize_target(platform)
+        spec = PUBLISHER_REGISTRY.get(target)
+        if spec is None:
+            raise ValueError(
+                "Unsupported single-platform workflow target: " f"{platform!r}."
+            )
+        if target not in AVAILABLE_PUBLISHERS:
+            raise ValueError("该平台 Publisher 尚未接入。")
+        if not _target_has_content(post, target):
+            raise ValueError(f"当前 Package 不包含{spec.label}所需内容。")
 
     playwright = None
     context = None
@@ -130,24 +148,19 @@ def run_single_platform_workflow(
         if on_browser_started is not None:
             on_browser_started(playwright, context, page)
 
-        controller.start_platform(platform)
-        current_step = f"Preparing {platform}"
-        if platform == "xiaohongshu":
+        controller.start_platform(target)
+        current_step = f"Preparing {target}"
+        if target == "xiaohongshu":
             run_xiaohongshu(page, post, controller)
             ready_message = "小红书已准备完成"
-        elif platform == "baijiahao":
+        elif target == "baijiahao":
             run_baijiahao(page, post, controller)
             ready_message = "百家号已准备完成"
         else:
             page = run_wechat(page, post, controller)
-            ready_message = "微信公众号已准备完成"
+            ready_message = "微信图文已准备完成"
 
-        controller.ready(
-            platform,
-            ready_message,
-            "检查完成后点击结束流程并关闭浏览器。",
-        )
-
+        controller.ready(target, ready_message, "检查完成后点击结束流程并关闭浏览器。")
         current_step = "Closing browser"
         if context is not None:
             context.close()
@@ -157,10 +170,8 @@ def run_single_platform_workflow(
     except BaseException as exc:
         error_step = getattr(exc, "step", current_step)
         try:
-            controller.failed(platform, error_step, exc)
+            controller.failed(target, error_step, exc)
         except Exception:
-            # Preserve the original exception if persisting failure state also
-            # fails, matching the established all-platform workflow behavior.
             pass
         raise
 

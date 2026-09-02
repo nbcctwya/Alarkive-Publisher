@@ -1,8 +1,8 @@
-"""Parsing and validation for Alarkive's Baijiahao image markers.
+"""Parsing and validation for Alarkive's long-form image markers.
 
-The marker protocol is deliberately small and is only used by the Baijiahao
-publisher. It is not part of Markdown and it does not change the Package
-schema; the marker lives in the existing Markdown content file.
+The marker protocol is deliberately small and is consumed by long-form
+publishers. It is not part of Markdown and it does not change the Package
+schema; the marker lives in the Markdown content file.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ IMAGE_MARKER_LINE_RE = re.compile(
 
 
 class InlineImageError(ValueError):
-    """An invalid or unsafe Baijiahao inline-image marker sequence."""
+    """An invalid or unsafe long-form inline-image marker sequence."""
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,7 @@ def parse_inline_images(text: str) -> tuple[ContentBlock, ...]:
     """
 
     if not isinstance(text, str):
-        raise TypeError("Baijiahao content must be a string.")
+        raise TypeError("Long-form content must be a string.")
 
     blocks: list[ContentBlock] = []
     cursor = 0
@@ -115,7 +115,7 @@ def validate_inline_image_text(
     text: str,
     image_count: int,
 ) -> tuple[tuple[ContentBlock, ...], InlineImageValidation]:
-    """Parse and validate one Baijiahao body in a single call."""
+    """Parse and validate one long-form body in a single call."""
 
     blocks = parse_inline_images(text)
     return blocks, validate_inline_images(blocks, image_count)
@@ -135,16 +135,23 @@ def append_unused_images(
 def inline_image_error(validation: InlineImageValidation) -> InlineImageError | None:
     """Build the stable Publisher-facing error for invalid marker input."""
 
+    return inline_image_error_for_label(validation, "Baijiahao")
+
+
+def inline_image_error_for_label(
+    validation: InlineImageValidation,
+    label: str,
+) -> InlineImageError | None:
     if validation.duplicate_images:
         index = validation.duplicate_images[0]
         return InlineImageError(
-            "Baijiahao content contains duplicate image marker: "
+            f"{label} content contains duplicate image marker: "
             f"[[image:{index}]]"
         )
     if validation.invalid_images:
         index = validation.invalid_images[0]
         return InlineImageError(
-            "Baijiahao content contains invalid image marker: "
+            f"{label} content contains invalid image marker: "
             f"[[image:{index}]]. Only {validation.image_count} "
             "images are available."
         )
@@ -159,6 +166,7 @@ __all__ = [
     "TextBlock",
     "append_unused_images",
     "inline_image_error",
+    "inline_image_error_for_label",
     "parse_inline_images",
     "validate_inline_image_text",
     "validate_inline_images",

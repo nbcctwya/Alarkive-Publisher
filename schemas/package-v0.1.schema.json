@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "package-v0.1.schema.json",
+  "title": "Alarkive Package v0.1 manifest",
+  "description": "The legacy manifest.json format for an Alarkive Package v0.1.",
+  "type": "object",
+  "required": ["schema_version", "id", "name", "created_at", "platforms"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "0.1"},
+    "id": {"type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$"},
+    "name": {"type": "string", "minLength": 1, "pattern": "[^\\s]"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "platforms": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "xiaohongshu": {"$ref": "#/$defs/platform"},
+        "baijiahao": {"$ref": "#/$defs/platform"},
+        "wechat": {"$ref": "#/$defs/platform"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "platform": {
+      "type": "object",
+      "required": ["title", "content_file", "images"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "pattern": "[^\\s]"},
+        "content_file": {
+          "type": "string",
+          "pattern": "^content/(?!\\.{1,2}(?:/|$))[^/\\\\]+(?:/(?!\\.{1,2}(?:/|$))[^/\\\\]+)*$"
+        },
+        "images": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "pattern": "^images/(?!\\.{1,2}(?:/|$))[^/\\\\]+(?:/(?!\\.{1,2}(?:/|$))[^/\\\\]+)*\\.[Pp][Nn][Gg]$"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1060,13 +1060,13 @@ def run_baijiahao(
 
     def fill_content() -> None:
         nonlocal body, inline_blocks, has_inline_images
-        inline_blocks, has_inline_images = _inline_image_blocks(post.baijiahao)
-        _fill_title(page, post.baijiahao)
+        inline_blocks, has_inline_images = _inline_image_blocks(post.public_long)
+        _fill_title(page, post.public_long)
         body = _body_locator(page)
         if has_inline_images:
             _clear_editor(body)
         else:
-            _fill_body(page, body, post.baijiahao)
+            _fill_body(page, body, post.public_long)
 
     _run_step("Filling Baijiahao title and content", fill_content)
     if body is None:
@@ -1075,7 +1075,7 @@ def run_baijiahao(
     controller.step(
         "baijiahao",
         "uploading_images",
-        f"向正文插入 {len(post.baijiahao.images)} 张图片",
+        f"向正文插入 {len(post.public_long.images)} 张图片",
     )
     _run_step(
         "Uploading Baijiahao images",
@@ -1083,10 +1083,10 @@ def run_baijiahao(
             _fill_body_with_inline_images(
                 page,
                 body,
-                post.baijiahao,
+                post.public_long,
                 inline_blocks,
             )
             if has_inline_images
-            else _insert_images(page, body, post.baijiahao.images)
+            else _insert_images(page, body, post.public_long.images)
         ),
     )

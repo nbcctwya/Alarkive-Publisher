@@ -3,95 +3,96 @@
 {% block content %}
 <div class="page-heading compact-heading">
     <div>
-        <p class="eyebrow">NEW PACKAGE</p>
+        <p class="eyebrow">NEW PACKAGE v0.2</p>
         <h1>上传图文</h1>
-        <p class="muted">按需填写平台内容，自动生成标准化任务目录。</p>
+        <p class="muted">按需准备内容模块，自动生成 Content Variant Package。</p>
     </div>
 </div>
 
-{% if error %}
-<div class="alert alert-error" role="alert">{{ error }}</div>
-{% endif %}
+{% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
 
 <form class="content-form" method="post" action="{{ url_for('create_post') }}" enctype="multipart/form-data" id="post-form">
     <section class="form-section">
         <div class="section-heading">
-            <div>
-                <p class="eyebrow">BASIC</p>
-                <h2>任务信息</h2>
-            </div>
+            <div><p class="eyebrow">BASIC</p><h2>任务信息</h2></div>
             <span class="required-note">* 必填</span>
         </div>
         <label class="field-label" for="name">任务名称 <span>*</span></label>
-        <input class="text-input" id="name" name="name" type="text" value="{{ form.get('name', '') }}" placeholder="例如：Qwen3.8 Flash" required>
+        <input class="text-input" id="name" name="name" type="text" value="{{ form.get('name', '') }}" placeholder="例如：Roman 太空望远镜" required>
     </section>
 
     <section class="form-section">
         <div class="section-heading">
-            <div>
-                <p class="eyebrow">PLATFORMS</p>
-                <h2>平台内容</h2>
-            </div>
-            <span class="muted">至少填写一个平台</span>
+            <div><p class="eyebrow">CONTENT VARIANTS</p><h2>内容模块</h2></div>
+            <span class="muted">至少填写一个模块</span>
         </div>
-
+        <p class="muted">标题和正文均可留空；若填写，请同时填写标题和正文。</p>
         <div class="platform-fields">
             <fieldset class="platform-card">
-                <legend>小红书</legend>
-                <label class="field-label" for="xiaohongshu_title">标题</label>
-                <input class="text-input" id="xiaohongshu_title" name="xiaohongshu_title" type="text" value="{{ form.get('xiaohongshu_title', '') }}">
+                <legend>公域长文（百家号 + 今日头条）</legend>
+                <label class="field-label" for="public_long_title">标题</label>
+                <input class="text-input" id="public_long_title" name="public_long_title" type="text" value="{{ form.get('public_long_title', '') }}">
                 <div class="field-label-row">
-                    <label class="field-label" for="xiaohongshu_body">正文</label>
-                    <button class="button button-secondary prompt-button" id="copy-xiaohongshu-prompt" type="button">复制小红书 Prompt</button>
+                    <label class="field-label" for="public_long_body">正文</label>
+                    <button class="button button-secondary prompt-button" id="copy-public-long-prompt" type="button">复制公域长文 AI Prompt</button>
                 </div>
-                <textarea class="body-input" id="xiaohongshu_body" name="xiaohongshu_body" rows="12" placeholder="原样输入 Markdown、Emoji 和换行内容">{{ form.get('xiaohongshu_body', '') }}</textarea>
-                <p class="muted">标题和正文均可留空；若填写，请同时填写标题和正文。</p>
-                <p class="prompt-status" id="xiaohongshu-prompt-status" aria-live="polite"></p>
-                <textarea class="prompt-fallback" id="xiaohongshu-prompt-fallback" rows="8" readonly hidden aria-label="小红书 Prompt 手动复制区域"></textarea>
+                <textarea class="body-input" id="public_long_body" name="public_long_body" rows="12" placeholder="支持 Markdown 和 [[image:N]] 图片占位符">{{ form.get('public_long_body', '') }}</textarea>
+                <p class="marker-status" id="public-long-marker-status" aria-live="polite"></p>
+                <p class="prompt-status" id="public-long-prompt-status" aria-live="polite"></p>
+                <textarea class="prompt-fallback" id="public-long-prompt-fallback" rows="8" readonly hidden aria-label="公域长文 Prompt 手动复制区域"></textarea>
             </fieldset>
 
             <fieldset class="platform-card">
-                <legend>百家号</legend>
-                <label class="field-label" for="baijiahao_title">标题</label>
-                <input class="text-input" id="baijiahao_title" name="baijiahao_title" type="text" value="{{ form.get('baijiahao_title', '') }}">
+                <legend>微信长文</legend>
+                <label class="field-label" for="wechat_long_title">标题</label>
+                <input class="text-input" id="wechat_long_title" name="wechat_long_title" type="text" value="{{ form.get('wechat_long_title', '') }}">
                 <div class="field-label-row">
-                    <label class="field-label" for="baijiahao_body">正文</label>
-                    <button class="button button-secondary prompt-button" id="copy-baijiahao-prompt" type="button">复制百家号 Prompt</button>
+                    <label class="field-label" for="wechat_long_body">正文</label>
+                    <button class="button button-secondary prompt-button" id="copy-wechat-long-prompt" type="button">复制微信长文 AI Prompt</button>
                 </div>
-                <textarea class="body-input" id="baijiahao_body" name="baijiahao_body" rows="12" placeholder="原样输入 Markdown、Emoji 和换行内容">{{ form.get('baijiahao_body', '') }}</textarea>
-                <p class="muted">标题和正文均可留空；若填写，请同时填写标题和正文。</p>
-                <p class="marker-status" id="baijiahao-marker-status" aria-live="polite"></p>
-                <p class="prompt-status" id="baijiahao-prompt-status" aria-live="polite"></p>
-                <textarea class="prompt-fallback" id="baijiahao-prompt-fallback" rows="8" readonly hidden aria-label="百家号 Prompt 手动复制区域"></textarea>
+                <textarea class="body-input" id="wechat_long_body" name="wechat_long_body" rows="12" placeholder="支持 Markdown 和 [[image:N]] 图片占位符">{{ form.get('wechat_long_body', '') }}</textarea>
+                <p class="muted">支持独立的图片编排；本版本暂未接入发布器。</p>
+                <p class="prompt-status" id="wechat-long-prompt-status" aria-live="polite"></p>
+                <textarea class="prompt-fallback" id="wechat-long-prompt-fallback" rows="8" readonly hidden aria-label="微信长文 Prompt 手动复制区域"></textarea>
             </fieldset>
 
             <fieldset class="platform-card">
-                <legend>微信公众号</legend>
-                <label class="field-label" for="wechat_title">标题</label>
-                <input class="text-input" id="wechat_title" name="wechat_title" type="text" value="{{ form.get('wechat_title', '') }}">
+                <legend>微信图文 / 小绿书</legend>
+                <label class="field-label" for="wechat_short_title">标题</label>
+                <input class="text-input" id="wechat_short_title" name="wechat_short_title" type="text" value="{{ form.get('wechat_short_title', '') }}">
                 <div class="field-label-row">
-                    <label class="field-label" for="wechat_body">正文</label>
-                    <button class="button button-secondary prompt-button" id="copy-wechat-prompt" type="button">复制小绿书 Prompt</button>
+                    <label class="field-label" for="wechat_short_body">正文</label>
+                    <button class="button button-secondary prompt-button" id="copy-wechat-short-prompt" type="button">复制微信图文 AI Prompt</button>
                 </div>
-                <textarea class="body-input" id="wechat_body" name="wechat_body" rows="12" placeholder="原样输入 Markdown、Emoji 和换行内容">{{ form.get('wechat_body', '') }}</textarea>
-                <p class="muted">标题和正文均可留空；若填写，请同时填写标题和正文。</p>
-                <p class="prompt-status" id="wechat-prompt-status" aria-live="polite"></p>
-                <textarea class="prompt-fallback" id="wechat-prompt-fallback" rows="8" readonly hidden aria-label="小绿书 Prompt 手动复制区域"></textarea>
+                <textarea class="body-input" id="wechat_short_body" name="wechat_short_body" rows="12" placeholder="适合手机阅读的简洁图文正文">{{ form.get('wechat_short_body', '') }}</textarea>
+                <p class="muted">图片按上传顺序作为独立图文组处理。</p>
+                <p class="prompt-status" id="wechat-short-prompt-status" aria-live="polite"></p>
+                <textarea class="prompt-fallback" id="wechat-short-prompt-fallback" rows="8" readonly hidden aria-label="微信图文 Prompt 手动复制区域"></textarea>
+            </fieldset>
+
+            <fieldset class="platform-card">
+                <legend>微头条</legend>
+                <label class="field-label" for="toutiao_short_title">标题</label>
+                <input class="text-input" id="toutiao_short_title" name="toutiao_short_title" type="text" value="{{ form.get('toutiao_short_title', '') }}">
+                <div class="field-label-row">
+                    <label class="field-label" for="toutiao_short_body">正文</label>
+                    <button class="button button-secondary prompt-button" id="copy-toutiao-short-prompt" type="button">复制微头条 AI Prompt</button>
+                </div>
+                <textarea class="body-input" id="toutiao_short_body" name="toutiao_short_body" rows="12" placeholder="直接、口语化的信息流正文">{{ form.get('toutiao_short_body', '') }}</textarea>
+                <p class="muted">图片按上传顺序作为独立图文组处理；本版本暂未接入发布器。</p>
+                <p class="prompt-status" id="toutiao-short-prompt-status" aria-live="polite"></p>
+                <textarea class="prompt-fallback" id="toutiao-short-prompt-fallback" rows="8" readonly hidden aria-label="微头条 Prompt 手动复制区域"></textarea>
             </fieldset>
         </div>
     </section>
 
     <section class="form-section">
         <div class="section-heading">
-            <div>
-                <p class="eyebrow">MEDIA</p>
-                <h2>图片</h2>
-            </div>
+            <div><p class="eyebrow">MEDIA</p><h2>图片</h2></div>
             <span class="muted">仅支持 PNG，1–20 张；单张 ≤ 20 MB，合计 ≤ 100 MB</span>
         </div>
         <div class="upload-zone" id="upload-zone" tabindex="0" role="button" aria-controls="images">
-            <div class="upload-icon">↑</div>
-            <h3>选择 PNG 图片</h3>
+            <div class="upload-icon">↑</div><h3>选择 PNG 图片</h3>
             <p>也可以将图片拖到此处，拖动缩略图调整顺序</p>
             <label class="button button-secondary upload-button" for="images">选择图片</label>
             <input id="images" name="images" type="file" accept=".png,image/png" multiple hidden>
