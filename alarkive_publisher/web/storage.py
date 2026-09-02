@@ -89,21 +89,29 @@ def _validate_required_fields(
     name: str,
     titles: Mapping[str, str],
     bodies: Mapping[str, str],
-) -> tuple[str, dict[str, str]]:
+) -> tuple[str, dict[str, str], tuple[str, ...]]:
     clean_name = name.strip()
     if not clean_name:
         raise StorageError("任务名称不能为空。")
 
     clean_titles: dict[str, str] = {}
+    active_platforms: list[str] = []
     for platform in PLATFORMS:
-        title = titles.get(platform)
-        body = bodies.get(platform)
-        if not isinstance(title, str) or not title.strip():
-            raise StorageError(f"{PLATFORM_LABELS[platform]}标题不能为空。")
-        if not isinstance(body, str) or not body.strip():
-            raise StorageError(f"{PLATFORM_LABELS[platform]}正文不能为空。")
-        clean_titles[platform] = title.strip()
-    return clean_name, clean_titles
+        title = titles.get(platform, "")
+        body = bodies.get(platform, "")
+        title_filled = isinstance(title, str) and bool(title.strip())
+        body_filled = isinstance(body, str) and bool(body.strip())
+        if title_filled != body_filled:
+            raise StorageError(
+                f"{PLATFORM_LABELS[platform]}的标题和正文需要同时填写，或者同时留空。"
+            )
+        if title_filled:
+            clean_titles[platform] = title.strip()
+            active_platforms.append(platform)
+
+    if not active_platforms:
+        raise StorageError("至少需要填写一个平台的标题和正文。")
+    return clean_name, clean_titles, tuple(active_platforms)
 
 
 def _validate_images(images: Sequence[ImageData]) -> None:
@@ -168,9 +176,16 @@ def _validate_manifest(manifest: Any, expected_id: str | None = None) -> None:
         raise StorageError("manifest created_at 必须包含时区。")
 
     platforms = manifest["platforms"]
-    if not isinstance(platforms, dict) or any(platform not in platforms for platform in PLATFORMS):
-        raise StorageError("manifest platforms 不完整。")
+    if not isinstance(platforms, dict) or not platforms:
+        raise StorageError("manifest platforms 至少需要包含一个支持的平台。")
+    unknown_platforms = sorted(set(platforms) - set(PLATFORMS))
+    if unknown_platforms:
+        raise StorageError(
+            "manifest platforms 包含不支持的平台：" + "、".join(unknown_platforms)
+        )
     for platform in PLATFORMS:
+        if platform not in platforms:
+            continue
         value = platforms[platform]
         if (
             not isinstance(value, dict)
@@ -209,7 +224,9 @@ def save_post(
     package format independently testable.
     """
 
-    clean_name, clean_titles = _validate_required_fields(name, titles, bodies)
+    clean_name, clean_titles, active_platforms = _validate_required_fields(
+        name, titles, bodies
+    )
     normalised_images = [_normalise_image(image) for image in images]
     _validate_images(normalised_images)
 
@@ -228,9 +245,9 @@ def save_post(
             content_directory.mkdir()
             images_directory.mkdir()
 
-            content_files: dict[str, str] = {}
             image_references = [f"images/{index:02d}.png" for index in range(1, len(normalised_images) + 1)]
-            for platform in PLATFORMS:
+            content_files: dict[str, str] = {}
+            for platform in active_platforms:
                 content_file = f"content/{platform}.md"
                 _write_utf8(content_directory / f"{platform}.md", bodies[platform])
                 content_files[platform] = content_file
@@ -249,7 +266,7 @@ def save_post(
                         "content_file": content_files[platform],
                         "images": image_references,
                     }
-                    for platform in PLATFORMS
+                    for platform in active_platforms
                 },
             }
             _validate_manifest(manifest, expected_id=task_id)
@@ -309,7 +326,8 @@ def _created_display(value: str) -> str:
 
 
 def _summary(directory: Path, manifest: dict[str, Any]) -> dict[str, Any]:
-    first_images = manifest["platforms"][PLATFORMS[0]]["images"]
+    first_platform = next(platform for platform in PLATFORMS if platform in manifest["platforms"])
+    first_images = manifest["platforms"][first_platform]["images"]
     try:
         publish_state = load_publish_state(directory)
     except PublishStateError as exc:
@@ -372,6 +390,8 @@ def get_post_detail(post_id: str, posts_root: Path | str | None = None) -> dict[
     manifest = _read_manifest(directory)
     platform_contents: list[dict[str, str]] = []
     for platform in PLATFORMS:
+        if platform not in manifest["platforms"]:
+            continue
         platform_data = manifest["platforms"][platform]
         content_path = directory / _safe_manifest_path(platform_data["content_file"])
         try:
@@ -389,7 +409,8 @@ def get_post_detail(post_id: str, posts_root: Path | str | None = None) -> dict[
             }
         )
     images = []
-    for image_reference in manifest["platforms"][PLATFORMS[0]]["images"]:
+    first_platform = next(platform for platform in PLATFORMS if platform in manifest["platforms"])
+    for image_reference in manifest["platforms"][first_platform]["images"]:
         image_path = directory / _safe_manifest_path(image_reference)
         if not image_path.is_file():
             raise StorageError(f"任务图片缺失：{image_reference}")

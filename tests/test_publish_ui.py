@@ -150,6 +150,51 @@ class PublishUiStateTests(unittest.TestCase):
         self.assertLess(rendered.index("发布全部"), rendered.index("平台内容"))
         self.assertGreater(rendered.index("发布小红书"), rendered.index("平台内容"))
 
+    def test_detail_only_shows_actions_for_platforms_present_in_package(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = save_post(
+                "只发百家号",
+                {"baijiahao": "标题"},
+                {"baijiahao": "正文"},
+                [ImageData("image.png", PNG)],
+                posts_root=root,
+            ).directory
+            post = get_post_detail(package.name, root)
+            post["publish_state"] = default_publish_state()
+            post["browser_open"] = False
+            post["publisher_active"] = False
+            rendered = web_app.templates.get_template("detail.html").render(
+                request=_TemplateRequest(), post=post
+            )
+
+        self.assertIn("发布百家号", rendered)
+        self.assertNotIn("发布小红书", rendered)
+        self.assertNotIn("发布小绿书", rendered)
+        self.assertIn("无内容", rendered)
+
+    def test_xiaohongshu_only_detail_disables_full_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = save_post(
+                "只发小红书",
+                {"xiaohongshu": "标题"},
+                {"xiaohongshu": "正文"},
+                [ImageData("image.png", PNG)],
+                posts_root=root,
+            ).directory
+            post = get_post_detail(package.name, root)
+            post["publish_state"] = default_publish_state()
+            post["browser_open"] = False
+            post["publisher_active"] = False
+            rendered = web_app.templates.get_template("detail.html").render(
+                request=_TemplateRequest(), post=post
+            )
+
+        self.assertIn("发布小红书", rendered)
+        self.assertNotIn("发布全部", rendered)
+        self.assertIn("没有可用于完整发布流程", rendered)
+
     def test_detail_hides_new_actions_while_publisher_is_active(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             _, post = self._detail_context(Path(temp))

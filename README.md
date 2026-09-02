@@ -1,4 +1,4 @@
-# Alarkive Publisher v0.1.7
+# Alarkive Publisher v0.1.8
 
 当前完整工作流为：
 
@@ -11,12 +11,32 @@ Markdown Renderer
         ↓
 CLI Publisher
         ↓
-小红书 → 百家号 → 微信公众号贴图
+百家号 → 微信公众号贴图（按 Package 中实际存在的平台执行）
 ```
 
-Web Content Manager 负责创建 Package；CLI Publisher 负责读取 Package 并执行三个平台的 Playwright Dry Run。Package 内容仍然只由 `manifest.json`、`content/` 和 `images/` 组成；v0.1.7 的运行状态另存为 Publisher sidecar。当前仍然不会点击任何平台的最终“发布/发表”按钮。
+Web Content Manager 负责创建 Package；CLI Publisher 负责读取 Package 并执行 Package 中实际存在的平台 Playwright Dry Run。Package 内容仍然只由 `manifest.json`、`content/` 和 `images/` 组成；运行状态另存为 Publisher sidecar。当前仍然不会点击任何平台的最终“发布/发表”按钮。
 
-v0.1.7 继续由 Web Content Manager 在任务详情页启动后台准备流程，并在网页中查看离散步骤、登录/人工检查等待点和失败信息。每个进程同时只允许一个 Web Publisher 使用共享的 `.browser-data/` profile。
+v0.1.8 继续由 Web Content Manager 在任务详情页启动后台准备流程，并在网页中查看离散步骤、登录/人工检查等待点和失败信息。每个进程同时只允许一个 Web Publisher 使用共享的 `.browser-data/` profile。
+
+## v0.1.8 — Optional Platform Content
+
+创建任务时，三个平台的内容均为可选，但至少要有一个完整的平台内容：
+
+- 标题和正文同时留空：Package 不包含该平台；
+- 标题和正文同时填写：Package 包含该平台；
+- 只填写标题或正文：非法，服务端会拒绝创建；
+- 至少需要一个平台的标题和正文都填写。
+
+Package v0.1 仍使用 `schema_version: "0.1"`。完整发布流程会自动跳过当前 Package 中不存在的平台；
+详情页也不会为缺失平台提供发布按钮。小红书 Publisher 代码保留，但小红书不会加入完整发布流程。
+
+## v0.1.8 Changelog
+
+- Web 创建页面允许平台内容按需留空，并由服务端校验平台成对填写。
+- Package v0.1 的 `platforms` 改为至少一个平台，兼容原有三平台 Package。
+- Loader、详情页和发布流程只读取并执行 manifest 中实际存在的平台。
+- 不存在内容的平台不能启动单平台发布；完整流程只准备存在的百家号和微信公众号内容。
+- 发布安全边界不变：Alarkive 仍不会自动点击任何平台真正的最终发布按钮。
 
 ## v0.1.7 — Independent Platform Publish
 
@@ -146,14 +166,14 @@ Alarkive Package v0.1 的正式格式规范见 [`PACKAGE_FORMAT.md`](PACKAGE_FOR
    .\.venv\Scripts\python.exe -m alarkive_publisher.web.app
    ```
 
-4. 浏览器访问 `http://127.0.0.1:8000`，填写任务名称、三个平台的标题和正文，上传 PNG 图片，然后点击“保存图文”。
+4. 浏览器访问 `http://127.0.0.1:8000`，按需填写平台的标题和正文，至少完成一个平台，上传 PNG 图片，然后点击“保存图文”。
 
 5. 进入任务详情页后：
 
-   - 点击“发布全部”，按小红书 → 百家号 → 微信公众号的顺序准备三个平台内容。
+   - 点击“发布全部”，按百家号 → 微信公众号的顺序准备当前 Package 中存在的平台内容；不存在的平台会自动跳过。
    - 点击对应平台内容卡片下方的“发布小红书”“发布百家号”或“发布小绿书”，只准备该平台内容。
    - Publisher 会启动共享 persistent Chrome，并停在平台最终发布按钮之前；登录、选择公众号和最终发布都需要用户手工完成。
-   - 完整流程中，小红书或百家号准备完成后点击“继续”；最后一个平台准备完成后点击“结束流程并关闭浏览器”。单平台准备完成后直接点击“结束流程并关闭浏览器”。
+   - 完整流程中，百家号准备完成后如果还有微信公众号内容则点击“继续”；最后一个平台准备完成后点击“结束流程并关闭浏览器”。单平台准备完成后直接点击“结束流程并关闭浏览器”。
 
 6. 使用完成后回到运行 Web Manager 的 PowerShell 窗口，按 `Ctrl+C` 停止服务。
 
@@ -169,16 +189,16 @@ posts/
     ├── manifest.json
     ├── publish-state.json       # Publisher Runtime sidecar，可选
     ├── content/
-    │   ├── xiaohongshu.md
-    │   ├── baijiahao.md
-    │   └── wechat.md
+    │   ├── xiaohongshu.md       # 按需存在
+    │   ├── baijiahao.md         # 按需存在
+    │   └── wechat.md             # 按需存在
     └── images/
         ├── 01.png
         ├── 02.png
         └── 03.png
 ```
 
-`manifest.json` 是 Package v0.1 的唯一元数据来源，包含任务 ID、名称、带时区的 `created_at`，以及每个平台自己的（已去除首尾空白）`title`、`content_file` 和有序 `images` 列表。
+`manifest.json` 是 Package v0.1 的唯一元数据来源，包含任务 ID、名称、带时区的 `created_at`，以及每个已启用平台自己的（已去除首尾空白）`title`、`content_file` 和有序 `images` 列表。`platforms` 至少包含一个平台，不存在的平台不会写入 manifest，也不会生成空正文文件。
 
 `publish-state.json` 不属于 Package 内容，也不是 `manifest.json` 的一部分。旧任务没有这个文件时，Web 界面按“未发布 / workflow idle”处理；Publisher 会在需要时以原子方式创建或更新它。Package Loader 不要求该文件存在。
 
@@ -202,11 +222,11 @@ Publisher 会在启动浏览器前完整读取并验证：
 
 - `manifest.json` 和 `schema_version`
 - Package ID 与目录名
-- 三个平台的标题和 Markdown 正文
+- manifest 中已存在平台的标题和 Markdown 正文
 - manifest 指定的每个平台图片列表及顺序
 - 所有正文和图片文件是否存在、是否位于 Package 内
 
-验证通过后，Publisher 会在运行时使用 Markdown Renderer：小红书和微信公众号贴图使用可读的纯文本，百家号使用受控 HTML 富文本。包含 marker 的百家号正文会先拆分为文本块和图片块，再按顺序写入编辑器；三个标题仍然直接使用 manifest 中的普通字符串。
+验证通过后，Publisher 会在运行时使用 Markdown Renderer：小红书和微信公众号贴图使用可读的纯文本，百家号使用受控 HTML 富文本。包含 marker 的百家号正文会先拆分为文本块和图片块，再按顺序写入编辑器；已启用平台的标题直接使用 manifest 中的普通字符串。
 
 ## Markdown Renderer
 
@@ -227,26 +247,22 @@ Publisher 根据平台处理：
 验证通过后才会启动 persistent Chrome profile，并按以下顺序运行：
 
 ```text
-小红书
-↓
-人工检查（按 Enter 继续）
-↓
 百家号
 ↓
-人工检查（按 Enter 继续）
+人工检查（按 Enter 继续；若无微信公众号则结束）
 ↓
 微信公众号贴图
 ↓
 人工检查（按 Enter 关闭浏览器）
 ```
 
-CLI 仍通过控制器使用 Enter 暂停。三个平台仍然都只填写内容、上传图片并停在最终发布按钮之前。
+CLI 仍通过控制器使用 Enter 暂停。完整流程只为 Package 中存在的百家号和微信公众号填写内容，并停在最终发布按钮之前；只有小红书的平台内容不能启动完整流程，但仍保留小红书单平台 Publisher。
 
 ## 使用 Web Publisher
 
-在图文详情页点击“发布全部”后，任务会立即显示“已发布”，并在后台启动一个共享浏览器流程。这里的“已发布”只是 Alarkive 本地内容管理状态，表示用户点击过完整发布入口；它不表示 Alarkive 已确认任何平台真正发布成功。点击“发布小红书”“发布百家号”或“发布小绿书”只运行对应平台的准备流程，不改变这个完整发布状态。
+在图文详情页点击“发布全部”后，任务会立即显示“已发布”，并在后台启动一个共享浏览器流程。这里的“已发布”只是 Alarkive 本地内容管理状态，表示用户点击过完整发布入口；它不表示 Alarkive 已确认任何平台真正发布成功。点击“发布小红书”“发布百家号”或“发布小绿书”只运行对应平台的准备流程，不改变这个完整发布状态。缺失平台不会显示单平台按钮，也不会被完整流程执行。
 
-完整流程中每个平台会依次经历检查登录、打开编辑器、上传图片、填写内容和“已准备完成”。小红书或百家号准备完成后请保持浏览器打开，并在网页点击“继续”；微信公众号准备完成后，点击“结束流程并关闭浏览器”，流程才会变为 `completed`。单平台流程只执行目标平台，目标平台准备完成后直接点击“结束流程并关闭浏览器”，不会显示或进入下一个平台。如果用户手工关闭浏览器，流程会记录为 `failed`，后台 worker 会检测到浏览器已退出并释放 Publisher，不会自动重新打开或恢复。
+完整流程中每个已启用的平台会依次经历检查登录、打开编辑器、上传图片、填写内容和“已准备完成”。百家号准备完成后只有在任务包含微信公众号内容时才需要点击“继续”；最后一个平台准备完成后，点击“结束流程并关闭浏览器”，流程才会变为 `completed`。只有小红书的平台内容不能启动完整流程，但仍可使用小红书单平台入口。单平台流程只执行目标平台，目标平台准备完成后直接点击“结束流程并关闭浏览器”，不会显示或进入下一个平台。如果用户手工关闭浏览器，流程会记录为 `failed`，后台 worker 会检测到浏览器已退出并释放 Publisher，不会自动重新打开或恢复。
 
 网页通过每秒轮询 `GET /api/posts/{id}/publish-state` 获取状态；单平台入口使用 `POST /posts/{id}/publish/{platform}`，其中 `platform` 为 `xiaohongshu`、`baijiahao` 或 `wechat`。整体状态包括 `idle`、`running`、`waiting`、`completed`、`failed` 和 `interrupted`；平台状态包括 `pending`、`running`、`waiting`、`ready` 和 `failed`。状态中的 `workflow_mode` 和 `target_platform` 是向后兼容的轻量运行元数据，旧 sidecar 缺少它们时仍按完整流程处理。接口另提供来源于进程内 `PublishManager` 的 `publisher_active`，用于确保存在任意 active workflow 时不会显示新的发布按钮。`completed` 只表示内容准备流程已完成，不表示平台真正发布成功。服务重启后，找不到对应后台任务的 `running`/`waiting` 状态会显示为 `interrupted`，不会自动恢复。
 
@@ -254,7 +270,7 @@ CLI 仍通过控制器使用 Enter 暂停。三个平台仍然都只填写内容
 
 ## 发布安全边界
 
-v0.1.7 仍然绝对不会自动点击小红书、百家号或微信公众号的最终按钮，包括“发布”“发表”“立即发布”“确认发布”“群发”等。Publisher 只打开编辑器、上传图片、填写标题和正文，并停在最终发布页。若用户确实要发布，仍需在打开的浏览器中手工点击平台按钮。
+v0.1.8 仍然绝对不会自动点击小红书、百家号或微信公众号的最终按钮，包括“发布”“发表”“立即发布”“确认发布”“群发”等。Publisher 只打开已启用平台的编辑器、上传图片、填写标题和正文，并停在最终发布页。若用户确实要发布，仍需在打开的浏览器中手工点击平台按钮。
 
 ### Package 错误
 
@@ -265,7 +281,7 @@ Error: manifest.json not found.
 This folder is not a valid Alarkive Package v0.1.
 ```
 
-Package Loader 是只读的，不会修改 `manifest.json`、Markdown 或图片文件。旧版 `xiaohongshu/*.txt`、`baijiahao/*.txt`、`wechat/*.txt` 目录格式不再是主流程，也不由 v0.1.7 的 `main.py` 读取。
+Package Loader 是只读的，不会修改 `manifest.json`、Markdown 或图片文件。旧版 `xiaohongshu/*.txt`、`baijiahao/*.txt`、`wechat/*.txt` 目录格式不再是主流程，也不由 v0.1.8 的 `main.py` 读取。
 
 ## 手工登录
 

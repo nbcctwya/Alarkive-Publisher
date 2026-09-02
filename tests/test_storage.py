@@ -57,6 +57,71 @@ class StorageValidationTests(unittest.TestCase):
             self.assertEqual(detail["platform_contents"][0]["title"], "Test Title")
             self.assertEqual(detail["platform_contents"][0]["body"], body)
 
+    def test_single_platform_writes_only_that_platform(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            saved = self._save(
+                root,
+                titles={"baijiahao": "百家号标题"},
+                bodies={"baijiahao": "百家号正文"},
+            )
+
+            self.assertEqual(set(saved.manifest["platforms"]), {"baijiahao"})
+            self.assertTrue((saved.directory / "content" / "baijiahao.md").is_file())
+            self.assertFalse((saved.directory / "content" / "xiaohongshu.md").exists())
+            self.assertFalse((saved.directory / "content" / "wechat.md").exists())
+            post = load_post(saved.directory)
+            self.assertIsNone(post.xiaohongshu)
+            self.assertIsNotNone(post.baijiahao)
+            self.assertIsNone(post.wechat)
+            self.assertEqual(
+                [item["key"] for item in get_post_detail(saved.id, root)["platform_contents"]],
+                ["baijiahao"],
+            )
+
+    def test_two_platforms_are_saved_without_empty_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            saved = self._save(
+                root,
+                titles={"baijiahao": "百家号标题", "wechat": "微信标题"},
+                bodies={"baijiahao": "百家号正文", "wechat": "微信正文"},
+            )
+
+            self.assertEqual(set(saved.manifest["platforms"]), {"baijiahao", "wechat"})
+            self.assertFalse((saved.directory / "content" / "xiaohongshu.md").exists())
+
+    def test_all_platforms_empty_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaisesRegex(ValueError, "至少需要填写一个平台"):
+                save_post(
+                    "测试任务",
+                    {platform: "" for platform in PLATFORMS},
+                    {platform: "" for platform in PLATFORMS},
+                    [ImageData("image.png", PNG)],
+                    posts_root=Path(temp),
+                )
+
+    def test_partial_platform_content_is_rejected(self) -> None:
+        cases = (
+            ({"baijiahao": "标题"}, {"baijiahao": ""}),
+            ({"baijiahao": ""}, {"baijiahao": "正文"}),
+            (
+                {"baijiahao": "标题", "wechat": "微信标题"},
+                {"baijiahao": "", "wechat": "微信正文"},
+            ),
+        )
+        for titles, bodies in cases:
+            with self.subTest(titles=titles, bodies=bodies), tempfile.TemporaryDirectory() as temp:
+                with self.assertRaisesRegex(ValueError, "百家号的标题和正文需要同时填写"):
+                    save_post(
+                        "测试任务",
+                        titles,
+                        bodies,
+                        [ImageData("image.png", PNG)],
+                        posts_root=Path(temp),
+                    )
+
     def test_fake_png_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaisesRegex(ValueError, "不是有效的 PNG"):

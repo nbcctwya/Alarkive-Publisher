@@ -150,6 +150,39 @@ class PublishManagerTests(unittest.TestCase):
             self.assertFalse(manager.has_active_workflow())
             self.assertFalse(manager.get_publish_state(package.name)["published"])
 
+    def test_single_platform_rejects_target_missing_from_package(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = save_post(
+                "只发百家号",
+                {"baijiahao": "标题"},
+                {"baijiahao": "正文"},
+                [ImageData("image.png", PNG)],
+                posts_root=root,
+            ).directory
+            manager = PublishManager(root, workflow_runner=lambda *args: None)
+
+            with self.assertRaisesRegex(PublisherUnsupportedPlatformError, "不包含微信公众号"):
+                manager.start_platform_publish(package.name, "wechat")
+            self.assertFalse(manager.has_active_workflow())
+
+    def test_full_workflow_rejects_xiaohongshu_only_package(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = save_post(
+                "只发小红书",
+                {"xiaohongshu": "标题"},
+                {"xiaohongshu": "正文"},
+                [ImageData("image.png", PNG)],
+                posts_root=root,
+            ).directory
+            manager = PublishManager(root, workflow_runner=lambda *args: None)
+
+            with self.assertRaisesRegex(PublisherUnsupportedPlatformError, "没有可用于完整发布流程"):
+                manager.start_publish(package.name)
+            self.assertFalse(manager.has_active_workflow())
+            self.assertFalse(load_publish_state(package)["published"])
+
     def test_single_platform_failure_marks_only_target_and_releases_job(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

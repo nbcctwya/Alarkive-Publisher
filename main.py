@@ -24,7 +24,7 @@ def _configure_output_encoding() -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Fill Xiaohongshu, Baijiahao, and WeChat image posts in order, "
+            "Fill the available Baijiahao and WeChat image posts in order, "
             "then stop before publishing."
         )
     )
@@ -60,39 +60,25 @@ def main() -> int:
     print("Package folder:")
     print(post.folder)
     print()
-    print("Xiaohongshu")
-    print("Title:")
-    print(post.xiaohongshu.title)
-    print()
-    print("Content:")
-    print(f"{len(post.xiaohongshu.body)} characters")
-    print()
-    print("Images:")
-    for image in post.xiaohongshu.images:
-        print(image.name)
-    print()
-    print("Baijiahao")
-    print("Title:")
-    print(post.baijiahao.title)
-    print()
-    print("Content:")
-    print(f"{len(post.baijiahao.body)} characters")
-    print()
-    print("Images:")
-    for image in post.baijiahao.images:
-        print(image.name)
-    print()
-    print("WeChat")
-    print("Title:")
-    print(post.wechat.title)
-    print()
-    print("Content:")
-    print(f"{len(post.wechat.body)} characters")
-    print()
-    print("Images:")
-    for image in post.wechat.images:
-        print(image.name)
-    print()
+    for platform, label in (
+        ("xiaohongshu", "Xiaohongshu"),
+        ("baijiahao", "Baijiahao"),
+        ("wechat", "WeChat"),
+    ):
+        content = getattr(post, platform)
+        if content is None:
+            continue
+        print(label)
+        print("Title:")
+        print(content.title)
+        print()
+        print("Content:")
+        print(f"{len(content.body)} characters")
+        print()
+        print("Images:")
+        for image in content.images:
+            print(image.name)
+        print()
 
     try:
         from alarkive_publisher.workflow import run_publisher_workflow

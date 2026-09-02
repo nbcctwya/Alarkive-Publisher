@@ -14,6 +14,7 @@
 {% endif %}
 
 {% set publish_state = post.publish_state %}
+{% set has_full_workflow = 'baijiahao' in post.manifest['platforms'] or 'wechat' in post.manifest['platforms'] %}
 <section
     class="detail-section publish-section"
     id="publish-panel"
@@ -23,6 +24,8 @@
     data-reset-url="{{ url_for('mark_unpublished_post', post_id=post.id) }}"
     data-close-url="{{ url_for('close_publish_browser', post_id=post.id) }}"
     data-browser-open="{{ 'true' if post.browser_open else 'false' }}"
+    data-full-workflow-available="{{ 'true' if has_full_workflow else 'false' }}"
+    data-full-workflow-platforms="{% if 'baijiahao' in post.manifest['platforms'] %}baijiahao{% endif %}{% if 'baijiahao' in post.manifest['platforms'] and 'wechat' in post.manifest['platforms'] %},{% endif %}{% if 'wechat' in post.manifest['platforms'] %}wechat{% endif %}"
     data-state-url="{{ url_for('publish_state_api', post_id=post.id) }}"
 >
     <div class="section-heading">
@@ -63,9 +66,13 @@
                 <button class="button button-secondary" type="submit">重新置为未发布</button>
             </form>
             {% else %}
-            <form method="post" action="{{ url_for('publish_post', post_id=post.id) }}" onsubmit="return confirm('开始发布全部平台的准备流程？\n\nAlarkive 会自动填写三个平台，但不会点击平台真正的发布按钮。');">
+            {% if has_full_workflow %}
+            <form method="post" action="{{ url_for('publish_post', post_id=post.id) }}" onsubmit="return confirm('开始准备当前任务中的已有平台？\n\nAlarkive 不会点击平台真正的发布按钮。');">
                 <button class="button button-secondary" type="submit">发布全部</button>
             </form>
+            {% else %}
+            <span class="workflow-action-note">当前任务没有可用于完整发布流程的平台内容</span>
+            {% endif %}
             {% endif %}
         </div>
     </div>
@@ -79,7 +86,7 @@
             {% for key, label in [('xiaohongshu', '小红书'), ('baijiahao', '百家号'), ('wechat', '微信公众号')] %}
             <div class="workflow-platform">
                 <span>{{ label }}</span>
-                <span data-platform-status="{{ key }}">{{ publish_state.workflow.platforms[key].status }}</span>
+                <span data-platform-status="{{ key }}" data-platform-available="{{ 'true' if key in post.manifest['platforms'] else 'false' }}">{% if key in post.manifest['platforms'] %}{{ publish_state.workflow.platforms[key].status }}{% else %}无内容{% endif %}</span>
             </div>
             {% endfor %}
         </div>
@@ -91,13 +98,13 @@
             {% if publish_state.workflow.status == 'waiting' %}
             <form method="post" action="{{ url_for('continue_publish', post_id=post.id) }}">
                 <button class="button button-primary" type="submit">
-                    {% if publish_state.workflow.current_step == 'ready' and (publish_state.workflow.workflow_mode == 'single' or publish_state.workflow.current_platform == 'wechat') %}结束流程并关闭浏览器{% elif publish_state.workflow.current_platform == 'xiaohongshu' %}继续到百家号{% elif publish_state.workflow.current_platform == 'baijiahao' %}继续到微信公众号{% else %}继续{% endif %}
+                    {% if publish_state.workflow.current_step == 'ready' and (publish_state.workflow.workflow_mode == 'single' or publish_state.workflow.current_platform == 'wechat' or (publish_state.workflow.current_platform == 'baijiahao' and 'wechat' not in post.manifest['platforms'])) %}结束流程并关闭浏览器{% elif publish_state.workflow.current_platform == 'xiaohongshu' %}继续到百家号{% elif publish_state.workflow.current_platform == 'baijiahao' %}继续到微信公众号{% else %}继续{% endif %}
                 </button>
             </form>
             {% endif %}
         </div>
     </div>
-    <p class="publisher-note">Alarkive v0.1.7 只准备内容，不会点击小红书、百家号或微信公众号的最终“发布/发表/群发”按钮。如需真正发布，请在浏览器中手工操作。单平台流程完成后请点击“结束流程并关闭浏览器”；完整流程中小红书和百家号完成后请点击网页里的“继续”。</p>
+    <p class="publisher-note">Alarkive v0.1.8 只准备任务中已有平台的内容，不会点击小红书、百家号或微信公众号的最终“发布/发表/群发”按钮。如需真正发布，请在浏览器中手工操作。单平台流程完成后请点击“结束流程并关闭浏览器”；完整流程会跳过任务中没有内容的平台。</p>
 </section>
 
 <section class="detail-section">

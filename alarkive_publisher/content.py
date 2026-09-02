@@ -37,9 +37,14 @@ class PostContent:
     id: str
     name: str
     created_at: str
-    xiaohongshu: PlatformContent
-    baijiahao: PlatformContent
-    wechat: PlatformContent
+    xiaohongshu: PlatformContent | None
+    baijiahao: PlatformContent | None
+    wechat: PlatformContent | None
+
+    def has_platform(self, platform: str) -> bool:
+        """Return whether this Package contains content for ``platform``."""
+
+        return platform in PLATFORMS and getattr(self, platform) is not None
 
 
 def _load_manifest(package_folder: Path) -> dict[str, Any]:
@@ -221,28 +226,38 @@ def load_post(post_folder: Path | str) -> PostContent:
     platforms = manifest.get("platforms")
     if not isinstance(platforms, dict):
         raise ContentError("Error: platforms is missing from manifest.")
+    if not platforms:
+        raise ContentError("Error: platforms must contain at least one supported platform.")
+    unknown_platforms = sorted(set(platforms) - set(PLATFORMS))
+    if unknown_platforms:
+        raise ContentError(
+            "Error: Unsupported platform(s) in manifest: "
+            + ", ".join(unknown_platforms)
+        )
 
     platform_contents = {
         platform: _load_platform_content(
             package_folder,
             platform,
-            platforms.get(platform),
+            platforms[platform],
         )
         for platform in PLATFORMS
+        if platform in platforms
     }
-    _, inline_validation = validate_inline_image_text(
-        platform_contents["baijiahao"].body,
-        len(platform_contents["baijiahao"].images),
-    )
-    inline_error = inline_image_error(inline_validation)
-    if inline_error is not None:
-        raise ContentError(f"Error: {inline_error}")
+    if "baijiahao" in platform_contents:
+        _, inline_validation = validate_inline_image_text(
+            platform_contents["baijiahao"].body,
+            len(platform_contents["baijiahao"].images),
+        )
+        inline_error = inline_image_error(inline_validation)
+        if inline_error is not None:
+            raise ContentError(f"Error: {inline_error}")
     return PostContent(
         folder=package_folder,
         id=package_id,
         name=name,
         created_at=created_at,
-        xiaohongshu=platform_contents["xiaohongshu"],
-        baijiahao=platform_contents["baijiahao"],
-        wechat=platform_contents["wechat"],
+        xiaohongshu=platform_contents.get("xiaohongshu"),
+        baijiahao=platform_contents.get("baijiahao"),
+        wechat=platform_contents.get("wechat"),
     )

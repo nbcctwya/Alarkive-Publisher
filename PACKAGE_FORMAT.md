@@ -11,7 +11,7 @@
 ## 1. Package 的用途
 
 Alarkive Package 是 Web Content Manager 与 CLI Publisher 之间的文件交换格式。
-它将一个任务的元数据、三个平台的 Markdown 正文和图片放在同一个目录中。
+它将一个任务的元数据、一个或多个平台的 Markdown 正文和图片放在同一个目录中。
 
 Package 是内容输入，不是发布结果记录。Publisher 只读取 Package 内容并准备平台编辑器，
 不会修改 `manifest.json`、Markdown 或图片。
@@ -24,16 +24,17 @@ Package 是内容输入，不是发布结果记录。Publisher 只读取 Package
 <package-id>/
 ├── manifest.json
 ├── content/
-│   ├── xiaohongshu.md
-│   ├── baijiahao.md
-│   └── wechat.md
+│   ├── xiaohongshu.md       # 按需存在
+│   ├── baijiahao.md         # 按需存在
+│   └── wechat.md             # 按需存在
 └── images/
     ├── 01.png
     ├── 02.png
     └── ...
 ```
 
-Web Content Manager 当前生成的标准布局使用以上三个正文文件名和两位数字图片文件名。
+Web Content Manager 当前生成的标准布局使用以上正文文件名和两位数字图片文件名；只会为 manifest
+中实际存在的平台生成正文文件。
 `content_file` 和 `images` 中的路径使用 `/` 作为分隔符，并且都是相对于 Package 根目录的路径。
 
 `publish-state.json` 如果存在，是 Publisher 的运行状态 sidecar，不属于 Package v0.1 内容，
@@ -53,17 +54,20 @@ Web Content Manager 当前生成的标准布局使用以上三个正文文件名
 | `id` | string | 是 | 格式为 `YYYYMMDD-HHMMSS-xxxx`，其中 `xxxx` 是 4 位小写十六进制字符。 |
 | `name` | string | 是 | 非空任务名称；不能只包含空白字符。 |
 | `created_at` | string | 是 | 带时区的 RFC 3339/ISO 8601 日期时间，例如 `2026-08-29T15:34:00+08:00`。 |
-| `platforms` | object | 是 | 三个平台的内容定义。 |
+| `platforms` | object | 是 | 至少一个支持平台的内容定义；不要求三个平台全部存在。 |
 
 `id` 必须与 Package 的目录名完全相同。实现不得仅根据 `manifest.json` 中的 `id` 猜测目录。
 
 ### 3.2 platforms
 
-`platforms` 必须包含以下三个键：
+`platforms` 至少包含以下支持平台中的一个键，也可以包含其中两个或三个：
 
 - `xiaohongshu`：小红书
 - `baijiahao`：百家号
 - `wechat`：微信公众号图文（界面中也称“小绿书”）
+
+某个平台键不存在，表示该 Package 没有为该平台准备内容。`platforms` 不能是空对象，也不能包含
+未知平台键。
 
 每个平台的值必须是对象，并包含以下字段：
 
@@ -103,6 +107,27 @@ Publisher 按对应平台 `images` 数组的顺序上传图片。
   }
 }
 ```
+
+单平台 Package 只保留实际存在的平台，例如：
+
+```json
+{
+  "schema_version": "0.1",
+  "id": "20260902-170000-a7c3",
+  "name": "生活资讯测试",
+  "created_at": "2026-09-02T17:00:00+08:00",
+  "platforms": {
+    "baijiahao": {
+      "title": "测试标题",
+      "content_file": "content/baijiahao.md",
+      "images": ["images/01.png", "images/02.png"]
+    }
+  }
+}
+```
+
+双平台 Package 的 `platforms` 可以同时包含 `baijiahao` 和 `wechat`；缺少的
+`xiaohongshu` 不需要创建空的 Markdown 文件。完整三平台 Package 仍使用上面的原有结构。
 
 ## 4. 正文文件
 
@@ -157,7 +182,8 @@ Publisher 在启动浏览器前验证：
 
 - `manifest.json` 存在、可解析且 `schema_version` 为 `0.1`；
 - Package ID 合法并与目录名一致；
-- 三个平台的标题、正文和图片列表完整；
+- manifest 中已存在平台的标题、正文和图片列表完整；
+ - `platforms` 至少存在一个平台，缺失的平台被跳过；
 - 正文和图片文件存在且位于 Package 内；
 - 正文是可读取的 UTF-8 文本；
 - 图片引用为 PNG，且百家号 marker 没有重复或越界。

@@ -52,6 +52,19 @@ class _FakePlaywright:
 
 
 class SinglePlatformWorkflowTests(unittest.TestCase):
+    @staticmethod
+    def _post_with_platforms(*platforms: str) -> PostContent:
+        enabled = set(platforms)
+        return PostContent(
+            folder=Path("."),
+            id="20260902-170000-a7c3",
+            name="测试任务",
+            created_at="2026-09-02T17:00:00+08:00",
+            xiaohongshu=object() if "xiaohongshu" in enabled else None,  # type: ignore[arg-type]
+            baijiahao=object() if "baijiahao" in enabled else None,  # type: ignore[arg-type]
+            wechat=object() if "wechat" in enabled else None,  # type: ignore[arg-type]
+        )
+
     def test_each_single_workflow_only_runs_its_target_and_closes_once(self) -> None:
         for target in ("xiaohongshu", "baijiahao", "wechat"):
             with self.subTest(target=target), tempfile.TemporaryDirectory() as temp:
@@ -59,7 +72,7 @@ class SinglePlatformWorkflowTests(unittest.TestCase):
                 playwright = _FakePlaywright()
                 recording = _RecordingController()
                 controller = cast(WorkflowController, recording)
-                post = cast(PostContent, object())
+                post = self._post_with_platforms(target)
                 page = object()
                 calls: list[str] = []
 
@@ -116,7 +129,7 @@ class SinglePlatformWorkflowTests(unittest.TestCase):
         playwright = _FakePlaywright()
         page = object()
         controller = cast(WorkflowController, _RecordingController())
-        post = cast(PostContent, object())
+        post = self._post_with_platforms("baijiahao", "wechat")
         calls: list[str] = []
 
         def record(name: str):
@@ -145,6 +158,58 @@ class SinglePlatformWorkflowTests(unittest.TestCase):
         self.assertEqual(calls, ["baijiahao", "wechat"])
         self.assertEqual(context.close_calls, 1)
         self.assertEqual(playwright.stop_calls, 1)
+
+    def test_all_platform_workflow_runs_only_present_baijiahao_and_wechat(self) -> None:
+        for present, expected in (
+            (("baijiahao", "wechat"), ["baijiahao", "wechat"]),
+            (("baijiahao",), ["baijiahao"]),
+            (("wechat",), ["wechat"]),
+        ):
+            with self.subTest(present=present):
+                context = _FakeContext()
+                playwright = _FakePlaywright()
+                recording = _RecordingController()
+                page = object()
+                calls: list[str] = []
+
+                def record_baijiahao(*args) -> None:
+                    del args
+                    calls.append("baijiahao")
+
+                def record_wechat(*args):
+                    del args
+                    calls.append("wechat")
+                    return page
+
+                with patch(
+                    "alarkive_publisher.workflow.start_browser",
+                    return_value=(playwright, context, page),
+                ), patch(
+                    "alarkive_publisher.workflow.run_baijiahao",
+                    side_effect=record_baijiahao,
+                ), patch(
+                    "alarkive_publisher.workflow.run_wechat",
+                    side_effect=record_wechat,
+                ):
+                    run_publisher_workflow(
+                        self._post_with_platforms(*present),
+                        Path("."),
+                        cast(WorkflowController, recording),
+                    )
+
+                self.assertEqual(calls, expected)
+                self.assertEqual(context.close_calls, 1)
+                self.assertEqual(playwright.stop_calls, 1)
+
+    def test_all_platform_workflow_rejects_xiaohongshu_only_package(self) -> None:
+        with patch("alarkive_publisher.workflow.start_browser") as start_browser:
+            with self.assertRaisesRegex(ValueError, "没有可用于完整发布流程"):
+                run_publisher_workflow(
+                    self._post_with_platforms("xiaohongshu"),
+                    Path("."),
+                    cast(WorkflowController, _RecordingController()),
+                )
+        start_browser.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -168,17 +168,6 @@ async def create_post(
     try:
         if not name.strip():
             raise StorageError("任务名称不能为空。")
-        required_fields = (
-            ("小红书标题", xiaohongshu_title),
-            ("小红书正文", xiaohongshu_body),
-            ("百家号标题", baijiahao_title),
-            ("百家号正文", baijiahao_body),
-            ("微信公众号标题", wechat_title),
-            ("微信公众号正文", wechat_body),
-        )
-        for label, value in required_fields:
-            if not value.strip():
-                raise StorageError(f"{label}不能为空。")
         if not uploaded:
             raise StorageError("至少需要上传 1 张 PNG 图片。")
 
@@ -288,6 +277,8 @@ async def post_detail(request: Request, post_id: str) -> HTMLResponse:
 async def publish_post(request: Request, post_id: str) -> Response:
     try:
         publish_manager.start_publish(post_id)
+    except PublisherUnsupportedPlatformError as exc:
+        return _render_detail_error(request, post_id, str(exc), status_code=400)
     except PublisherBusyError as exc:
         return _render_detail_error(request, post_id, str(exc))
     except PublisherAlreadyPublishedError as exc:

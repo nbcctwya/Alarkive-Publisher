@@ -38,7 +38,7 @@ class PublisherAlreadyPublishedError(PublishManagerError):
 
 
 class PublisherUnsupportedPlatformError(PublishManagerError):
-    """A single-platform workflow was requested for an unknown platform."""
+    """A workflow was requested for an unsupported or missing platform."""
 
 
 WorkflowRunner = Callable[[PostContent, Path, WebWorkflowController], None]
@@ -167,6 +167,22 @@ class PublishManager:
 
             # Validate the immutable Package before changing the local marker.
             post = load_post(post_folder)
+            if workflow_mode == "all" and not any(
+                post.has_platform(platform) for platform in ("baijiahao", "wechat")
+            ):
+                raise PublisherUnsupportedPlatformError(
+                    "当前任务没有可用于完整发布流程的平台内容（百家号或微信公众号）。"
+                )
+            if target_platform is not None and not post.has_platform(target_platform):
+                platform_labels = {
+                    "xiaohongshu": "小红书",
+                    "baijiahao": "百家号",
+                    "wechat": "微信公众号",
+                }
+                raise PublisherUnsupportedPlatformError(
+                    f"当前任务不包含{platform_labels.get(target_platform, target_platform)}内容，"
+                    "无法启动单平台发布。"
+                )
             current = load_publish_state(post_folder)
             if mark_local_published and current["published"]:
                 raise PublisherAlreadyPublishedError(

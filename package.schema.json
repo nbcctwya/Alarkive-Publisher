@@ -35,11 +35,7 @@
     },
     "platforms": {
       "type": "object",
-      "required": [
-        "xiaohongshu",
-        "baijiahao",
-        "wechat"
-      ],
+      "minProperties": 1,
       "properties": {
         "xiaohongshu": {
           "$ref": "#/$defs/platform"
@@ -51,6 +47,7 @@
           "$ref": "#/$defs/platform"
         }
       },
+      "additionalProperties": false,
       "description": "Platform-specific content and ordered image references."
     }
   },

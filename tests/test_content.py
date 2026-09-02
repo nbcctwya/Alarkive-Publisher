@@ -125,3 +125,43 @@ class PackageLoaderTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ContentError, "invalid image marker: \[\[image:3\]\]"):
                 load_post(package)
+
+    def test_single_platform_package_loads_and_missing_platforms_are_none(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            package = save_post(
+                "只发微信",
+                {"wechat": "微信标题"},
+                {"wechat": "微信正文"},
+                [ImageData("first.png", PNG)],
+                posts_root=Path(temp),
+            ).directory
+
+            post = load_post(package)
+
+            self.assertIsNone(post.xiaohongshu)
+            self.assertIsNone(post.baijiahao)
+            self.assertIsNotNone(post.wechat)
+            self.assertFalse(post.has_platform("baijiahao"))
+            self.assertTrue(post.has_platform("wechat"))
+
+    def test_empty_platforms_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            package = self._make_package(Path(temp))
+            manifest = self._read_manifest(package)
+            manifest["platforms"] = {}
+            self._write_manifest(package, manifest)
+
+            with self.assertRaisesRegex(ContentError, "at least one supported platform"):
+                load_post(package)
+
+    def test_baijiahao_marker_validation_is_skipped_when_platform_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            package = save_post(
+                "只发微信",
+                {"wechat": "微信标题"},
+                {"wechat": "正文 [[image:999]]"},
+                [ImageData("first.png", PNG)],
+                posts_root=Path(temp),
+            ).directory
+
+            self.assertIsNotNone(load_post(package).wechat)

@@ -430,7 +430,8 @@
         running: "正在运行",
         waiting: "等待人工操作",
         ready: "已准备完成",
-        failed: "失败"
+        failed: "失败",
+        unavailable: "无内容"
     };
     const workflowLabels = {
         idle: "未启动",
@@ -479,6 +480,7 @@
             state.workflow &&
             state.workflow.status === "failed";
         const publisherActive = state.publisher_active === true;
+        const fullWorkflowAvailable = panel.dataset.fullWorkflowAvailable !== "false";
 
         // A failed workflow keeps its browser alive for inspection.  Until
         // that browser is explicitly closed, do not offer a second Publish
@@ -503,14 +505,19 @@
             notice.className = "workflow-action-note";
             notice.textContent = "发布流程进行中";
             actions.appendChild(notice);
-        } else if (!state.published) {
+        } else if (!state.published && fullWorkflowAvailable) {
             const allForm = createForm(
                 panel.dataset.publishUrl,
                 "发布全部",
-                "开始发布全部平台的准备流程？\n\nAlarkive 会自动填写三个平台，但不会点击平台真正的发布按钮。"
+                "开始发布已有平台内容的准备流程？\n\nAlarkive 不会点击平台真正的发布按钮。"
             );
             allForm.querySelector("button").className = "button button-secondary";
             actions.appendChild(allForm);
+        } else if (!state.published) {
+            const notice = document.createElement("span");
+            notice.className = "workflow-action-note";
+            notice.textContent = "当前任务没有可用于完整发布流程的平台内容";
+            actions.appendChild(notice);
         }
         if (failedBrowserOpen) {
             actions.appendChild(createForm(panel.dataset.closeUrl, "关闭浏览器"));
@@ -558,9 +565,12 @@
         let text = "继续";
         if (workflow.current_platform === "xiaohongshu") text = "继续到百家号";
         if (workflow.current_platform === "baijiahao") text = "继续到微信公众号";
+        const fullWorkflowPlatforms = (panel.dataset.fullWorkflowPlatforms || "").split(",").filter(Boolean);
         if (
             workflow.current_step === "ready" &&
-            (workflow.workflow_mode === "single" || workflow.current_platform === "wechat")
+            (workflow.workflow_mode === "single" ||
+                workflow.current_platform === "wechat" ||
+                (workflow.current_platform === "baijiahao" && !fullWorkflowPlatforms.includes("wechat")))
         ) {
             text = "结束流程并关闭浏览器";
         }
@@ -583,6 +593,11 @@
         Object.keys(labels).forEach((platform) => {
             const element = panel.querySelector('[data-platform-status="' + platform + '"]');
             if (!element) return;
+            if (element.dataset.platformAvailable === "false") {
+                element.textContent = "无内容";
+                element.dataset.status = "unavailable";
+                return;
+            }
             const platformState = state.workflow.platforms[platform] || {};
             element.textContent = statusLabels[platformState.status] || platformState.status || "等待";
             element.dataset.status = platformState.status || "pending";
