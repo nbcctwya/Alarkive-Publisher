@@ -560,8 +560,11 @@ def _image_trigger(page: Page) -> Locator | None:
         # Inspect that small, editor-scoped control set as a fallback instead
         # of relying on a positional button index.
         toolbar_buttons = frame.locator(
-            '[role="toolbar"] button, [class*="toolbar"] button, '
-            '[data-toolbar] button, [data-editor-toolbar] button'
+            '[role="toolbar"] button, [role="toolbar"] [role="button"], '
+            '[class*="toolbar"] button, [class*="toolbar"] [role="button"], '
+            '[class*="syl"] button, [class*="syl"] [role="button"], '
+            '[data-toolbar], [data-toolbar] button, '
+            '[data-editor-toolbar], [data-editor-toolbar] button'
         )
         for index in range(toolbar_buttons.count()):
             candidate = toolbar_buttons.nth(index)
@@ -579,15 +582,91 @@ def _image_trigger(page: Page) -> Locator | None:
                         "data-e2e",
                         "data-action",
                         "data-command",
+                        "data-icon",
+                        "data-name",
+                        "data-type",
+                        "id",
+                        "name",
+                        "value",
+                        "onclick",
                         "class",
                     )
                 )
-                label += " " + candidate.inner_html()
+                label += " " + candidate.evaluate("element => element.outerHTML")
             except Exception:
                 continue
             if re.search(r"封面|头图|头像", label, re.IGNORECASE):
                 continue
-            if re.search(r"image|picture|photo|upload|图片|图像|照片", label, re.IGNORECASE):
+            if re.search(
+                r"image|picture|photo|upload|media|icon[-_]?pic|icon[-_]?image|"
+                r"插图|配图|图片|图像|照片|媒体",
+                label,
+                re.IGNORECASE,
+            ):
+                return candidate
+
+        # A few builds render the toolbar as generic divs and omit both the
+        # toolbar role and the icon name from the button itself.  Limit this
+        # last fallback to controls near the ProseMirror root and inspect the
+        # complete control markup; do not use a global nth-button guess.
+        controls = frame.locator('button, [role="button"], [tabindex]')
+        for index in range(controls.count()):
+            candidate = controls.nth(index)
+            if not _is_interactable(candidate):
+                continue
+            try:
+                if candidate.get_attribute("contenteditable") == "true":
+                    continue
+                near_editor = candidate.evaluate(
+                    """
+                    element => {
+                        const editor = document.querySelector('.ProseMirror');
+                        if (!editor) return false;
+                        let current = element;
+                        for (let depth = 0; current && depth < 6; depth += 1) {
+                            if (current.contains(editor)) return true;
+                            current = current.parentElement;
+                        }
+                        return false;
+                    }
+                    """
+                )
+                if not near_editor:
+                    continue
+                label = " ".join(
+                    str(candidate.get_attribute(attribute) or "")
+                    for attribute in (
+                        "aria-label",
+                        "title",
+                        "data-tooltip",
+                        "data-tip",
+                        "data-title",
+                        "data-testid",
+                        "data-e2e",
+                        "data-action",
+                        "data-command",
+                        "data-icon",
+                        "data-name",
+                        "data-type",
+                        "id",
+                        "name",
+                        "value",
+                        "onclick",
+                        "class",
+                    )
+                )
+                label += " " + (candidate.text_content() or "")
+                label += " " + candidate.evaluate("element => element.outerHTML")
+            except Exception:
+                continue
+            if re.search(r"封面|头图|头像|预览并发布|发布", label, re.IGNORECASE):
+                continue
+            if re.search(
+                r"image|picture|photo|upload|media|icon[-_]?pic|icon[-_]?image|"
+                r"插图|配图|图片|图像|照片|媒体",
+                label,
+                re.IGNORECASE,
+            ):
                 return candidate
     return None
 
@@ -708,13 +787,15 @@ def _wait_for_editor_images(page: Page, editor: Locator, minimum: int) -> None:
 
 def _insert_image(page: Page, editor: Locator, image: Path) -> None:
     before_count = _editor_image_count(editor)
+    # The current toolbar can remain disabled/unmounted until the ProseMirror
+    # editor owns focus, so focus it before resolving the image control.
+    _focus_editor_for_image_insertion(editor)
     trigger = _image_trigger(page)
     if trigger is None:
         raise PublisherError(
             "Uploading Toutiao article image",
             "Could not find the article editor's inline image control.",
         )
-    _focus_editor_for_image_insertion(editor)
     path = str(image.resolve())
 
     try:
