@@ -4,10 +4,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from playwright.sync_api import Error as PlaywrightError
+
 from alarkive_publisher.content import ContentVariant, PostContent
 from alarkive_publisher.inline_images import ImageBlock, TextBlock
 from alarkive_publisher.toutiao_article import (
     EDITOR_URL,
+    _navigate,
     _fill_body_with_inline_images,
     _fill_title,
     _inline_image_blocks,
@@ -57,6 +60,21 @@ def _post(content: ContentVariant | None) -> PostContent:
 class ToutiaoArticleRoutingTests(unittest.TestCase):
     def test_editor_entrypoint_is_the_current_graphic_publish_page(self) -> None:
         self.assertEqual(EDITOR_URL, "https://mp.toutiao.com/profile_v4/graphic/publish")
+
+    def test_navigation_tolerates_aborted_same_domain_spa_redirect(self) -> None:
+        class Page:
+            url = EDITOR_URL
+
+            def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
+                self.args = (url, wait_until, timeout)
+                raise PlaywrightError("Page.goto: net::ERR_ABORTED at " + url)
+
+        page = Page()
+        with patch("alarkive_publisher.toutiao_article._wait_for_dom") as wait_for_dom:
+            _navigate(page, EDITOR_URL)  # type: ignore[arg-type]
+
+        self.assertEqual(page.args, (EDITOR_URL, "commit", 60_000))
+        wait_for_dom.assert_called_once_with(page)
 
     def test_marker_plan_reads_public_long_and_appends_unused_images_in_order(self) -> None:
         content = ContentVariant(

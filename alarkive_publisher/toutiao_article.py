@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page, TimeoutError
 
 from .content import PlatformContent, PostContent
@@ -90,6 +91,27 @@ def _wait_for_dom(page: Page) -> None:
     )
 
 
+def _navigate(page: Page, url: str) -> None:
+    """Navigate through Toutiao's SPA redirects without false-failing on aborts.
+
+    Toutiao can replace the requested document while Playwright is waiting for
+    ``domcontentloaded`` (especially when restoring a logged-in profile).  In
+    that case Chromium reports ``net::ERR_ABORTED`` even though the replacement
+    page is already attached.  Waiting for ``commit`` and then the visible DOM
+    lets the login/editor checks decide whether navigation actually succeeded.
+    """
+
+    try:
+        page.goto(url, wait_until="commit", timeout=60_000)
+    except PlaywrightError as exc:
+        message = str(exc)
+        if not re.search(r"ERR_ABORTED|interrupted by another navigation", message, re.I):
+            raise
+        if not page.url.startswith("https://mp.toutiao.com/"):
+            raise
+    _wait_for_dom(page)
+
+
 def _is_login_page(page: Page) -> bool:
     if re.search(r"/auth/|/login|passport", page.url, re.IGNORECASE):
         return True
@@ -103,8 +125,7 @@ def _is_login_page(page: Page) -> bool:
 
 
 def _check_login(page: Page, controller: WorkflowController) -> None:
-    page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
-    _wait_for_dom(page)
+    _navigate(page, HOME_URL)
     if not _is_login_page(page):
         return
 
@@ -116,8 +137,7 @@ def _check_login(page: Page, controller: WorkflowController) -> None:
         "需要登录今日头条。请在打开的 Chrome 浏览器中完成登录。",
         "登录完成后继续。",
     )
-    page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60_000)
-    _wait_for_dom(page)
+    _navigate(page, HOME_URL)
     if _is_login_page(page):
         raise PublisherError(
             "Checking Toutiao article login",
@@ -144,8 +164,7 @@ def _close_dialogs(page: Page) -> None:
 
 
 def _open_editor(page: Page) -> None:
-    page.goto(EDITOR_URL, wait_until="domcontentloaded", timeout=60_000)
-    _wait_for_dom(page)
+    _navigate(page, EDITOR_URL)
     if _is_login_page(page):
         raise PublisherError(
             "Opening Toutiao article editor",
