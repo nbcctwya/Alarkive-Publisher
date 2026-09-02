@@ -29,7 +29,7 @@ class _Node:
 
 _MARKDOWN = MarkdownIt("commonmark", {"html": False})
 _PLAIN_PLATFORMS = {"xiaohongshu", "wechat"}
-_RICH_PLATFORMS = {"baijiahao"}
+_RICH_PLATFORMS = {"baijiahao", "toutiao_article"}
 _INLINE_PAIRS = {
     "strong_open": ("strong_close", "strong"),
     "em_open": ("em_close", "em"),

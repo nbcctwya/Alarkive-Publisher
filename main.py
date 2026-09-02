@@ -122,6 +122,8 @@ def main() -> int:
                     if "xiaohongshu" in error_text
                     else "baijiahao-failure.png"
                     if "baijiahao" in error_text
+                    else "toutiao_article-failure.png"
+                    if "toutiao" in error_text
                     else "wechat-failure.png"
                     if "wechat" in error_text
                     else "publisher-failure.png"

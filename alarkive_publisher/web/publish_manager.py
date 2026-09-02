@@ -196,6 +196,7 @@ class PublishManager:
                 if not post.has_content(spec.variant):
                     platform_labels = {
                         "baijiahao": "百家号",
+                        "toutiao_article": "今日头条文章",
                         "wechat_image": "微信图文",
                     }
                     label = platform_labels.get(target_platform, spec.label)

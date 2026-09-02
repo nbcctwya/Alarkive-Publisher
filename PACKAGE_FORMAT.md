@@ -110,7 +110,7 @@ Package 保存 **Content Variant**，平台目标通过程序内的 routing 映�
 
 `N` 从 1 开始，对应该变体的 `images` 数组。marker 不能重复、不能越界、必须独占一行（允许
 缩进和行尾空白），格式错误会在启动浏览器前被拒绝。两个长文变体各自拥有独立图片编排；图片
-资产可以共享，但插入位置不共享。
+资产可以共享，但插入位置不共享。`public_long` 当前由百家号和今日头条文章共同消费；两者读取同一份标题、Markdown 正文、图片列表和 marker 位置语义。
 
 `wechat_short` 与 `toutiao_short` 使用有序图片列表，不要求正文包含 marker。
 
@@ -125,14 +125,13 @@ wechat_short → wechat_image
 toutiao_short → toutiao_micro
 ```
 
-v0.2.0 当前已接入的 Publisher 只有：
+v0.2.1 当前已接入的 Publisher 是：
 
 - `baijiahao`：消费 `public_long`，可发布准备
+- `toutiao_article`：消费 `public_long`，可发布准备
 - `wechat_image`：消费 `wechat_short`，可发布准备
 
-`toutiao_article`、`wechat_article`、`toutiao_micro` 的内容可以保存和展示，但 Publisher 尚未接入，
-详情页显示“待接入”，不会启动空 workflow。一键发布只执行当前任务中存在且已接入的目标，并复用
-同一个浏览器生命周期；不会点击任何平台最终发布按钮。
+`wechat_article`、`toutiao_micro` 的内容可以保存和展示，但 Publisher 尚未接入，详情页显示“待接入”，不会启动空 workflow。
 
 ## 5. Legacy Package v0.1
 
@@ -143,7 +142,7 @@ v0.2.0 当前已接入的 Publisher 只有：
 - `wechat` → `wechat_short`
 - `xiaohongshu` 保留为 legacy-only 内容，不进入 v0.2 Web UI routing
 
-旧三平台 Package 无需迁移、无需修改，仍可按“百家号 → 微信图文”执行。Web Content Manager 从
+旧三平台 Package 无需迁移、无需修改，仍可按“百家号 → 今日头条文章 → 微信图文”执行。Web Content Manager 从
 v0.2.0 起只写新的 v0.2 格式。
 
 ## 6. 校验职责

@@ -65,7 +65,7 @@ class ContentVariantPackageTests(unittest.TestCase):
         statuses = {item["target"]: item["status"] for item in detail["publish_targets"]}
         self.assertEqual(statuses["baijiahao"], "available")
         self.assertEqual(statuses["wechat_image"], "available")
-        self.assertEqual(statuses["toutiao_article"], "not_implemented")
+        self.assertEqual(statuses["toutiao_article"], "available")
         self.assertEqual(statuses["wechat_article"], "no_content")
 
     def test_all_variants_empty_is_rejected(self) -> None:

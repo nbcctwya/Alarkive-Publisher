@@ -61,12 +61,12 @@ class SinglePlatformWorkflowTests(unittest.TestCase):
             name="测试任务",
             created_at="2026-09-02T17:00:00+08:00",
             xiaohongshu=object() if "xiaohongshu" in enabled else None,  # type: ignore[arg-type]
-            baijiahao=object() if "baijiahao" in enabled else None,  # type: ignore[arg-type]
+            baijiahao=object() if {"baijiahao", "toutiao_article"} & enabled else None,  # type: ignore[arg-type]
             wechat=object() if "wechat" in enabled else None,  # type: ignore[arg-type]
         )
 
     def test_each_single_workflow_only_runs_its_target_and_closes_once(self) -> None:
-        for target in ("xiaohongshu", "baijiahao", "wechat"):
+        for target in ("xiaohongshu", "baijiahao", "toutiao_article", "wechat"):
             with self.subTest(target=target), tempfile.TemporaryDirectory() as temp:
                 context = _FakeContext()
                 playwright = _FakePlaywright()
@@ -84,6 +84,10 @@ class SinglePlatformWorkflowTests(unittest.TestCase):
                     del args
                     calls.append("baijiahao")
 
+                def record_toutiao(*args) -> None:
+                    del args
+                    calls.append("toutiao_article")
+
                 def record_wechat(*args):
                     del args
                     calls.append("wechat")
@@ -98,6 +102,9 @@ class SinglePlatformWorkflowTests(unittest.TestCase):
                 ), patch(
                     "alarkive_publisher.workflow.run_baijiahao",
                     side_effect=record_baijiahao,
+                ), patch(
+                    "alarkive_publisher.workflow.run_toutiao_article",
+                    side_effect=record_toutiao,
                 ), patch(
                     "alarkive_publisher.workflow.run_wechat",
                     side_effect=record_wechat,
@@ -150,19 +157,22 @@ class SinglePlatformWorkflowTests(unittest.TestCase):
             "alarkive_publisher.workflow.run_baijiahao",
             side_effect=record("baijiahao"),
         ), patch(
+            "alarkive_publisher.workflow.run_toutiao_article",
+            side_effect=record("toutiao_article"),
+        ), patch(
             "alarkive_publisher.workflow.run_wechat",
             side_effect=record("wechat"),
         ):
             run_publisher_workflow(post, Path("."), controller)
 
-        self.assertEqual(calls, ["baijiahao", "wechat"])
+        self.assertEqual(calls, ["baijiahao", "toutiao_article", "wechat"])
         self.assertEqual(context.close_calls, 1)
         self.assertEqual(playwright.stop_calls, 1)
 
-    def test_all_platform_workflow_runs_only_present_baijiahao_and_wechat(self) -> None:
+    def test_all_platform_workflow_runs_only_present_supported_targets(self) -> None:
         for present, expected in (
-            (("baijiahao", "wechat"), ["baijiahao", "wechat"]),
-            (("baijiahao",), ["baijiahao"]),
+            (("baijiahao", "wechat"), ["baijiahao", "toutiao_article", "wechat"]),
+            (("baijiahao",), ["baijiahao", "toutiao_article"]),
             (("wechat",), ["wechat"]),
         ):
             with self.subTest(present=present):
@@ -181,12 +191,19 @@ class SinglePlatformWorkflowTests(unittest.TestCase):
                     calls.append("wechat")
                     return page
 
+                def record_toutiao(*args) -> None:
+                    del args
+                    calls.append("toutiao_article")
+
                 with patch(
                     "alarkive_publisher.workflow.start_browser",
                     return_value=(playwright, context, page),
                 ), patch(
                     "alarkive_publisher.workflow.run_baijiahao",
                     side_effect=record_baijiahao,
+                ), patch(
+                    "alarkive_publisher.workflow.run_toutiao_article",
+                    side_effect=record_toutiao,
                 ), patch(
                     "alarkive_publisher.workflow.run_wechat",
                     side_effect=record_wechat,

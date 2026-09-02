@@ -1,4 +1,4 @@
-# Alarkive Publisher v0.2.0
+# Alarkive Publisher v0.2.1
 
 Alarkive Publisher 负责把研究内容整理为不可变的 Alarkive Package，并为已经接入的渠道准备发布页面。当前版本的内容模型是：
 
@@ -15,13 +15,14 @@ Publisher
 当前真正可运行的 Publisher 是：
 
 - `baijiahao`：消费 `public_long`（公域长文）
+- `toutiao_article`：消费 `public_long`（公域长文）
 - `wechat_image`：消费 `wechat_short`（微信图文 / 小绿书）
 
-内容模型已经预留但尚未接入 Publisher 的目标是：今日头条文章、微信公众号长文、微头条。它们可以保存、读取和展示，但不会启动空的浏览器流程。
+内容模型已经预留但尚未接入 Publisher 的目标是：微信公众号长文、微头条。它们可以保存、读取和展示，但不会启动空的浏览器流程。
 
 小红书已经从 Web UI、内容表单、详情页和完整 workflow 中移除；底层 `xiaohongshu.py` 与 `run_xiaohongshu()` 保留为 legacy publisher，供旧集成使用。
 
-## v0.2.0 Content Variant
+## v0.2 Content Variant
 
 一个任务可以包含以下四种模块中的任意一个或多个：
 
@@ -78,7 +79,7 @@ v0.1 xiaohongshu → legacy-only field
 因此旧的百家号 + 微信公众号 Package 仍可执行：
 
 ```text
-百家号 → 微信图文
+百家号 → 今日头条文章 → 微信图文
 ```
 
 旧 `manifest.json` 不会被 Loader 改写；Web Manager 只会创建新的 v0.2 Package。
@@ -111,7 +112,7 @@ python -m alarkive_publisher.web.app
 没有对应 Content Variant → 无内容
 ```
 
-一键发布的定义是“当前任务中有内容且 Publisher 已接入的所有平台”。当前顺序为百家号 → 微信图文，共享一个浏览器生命周期，并始终停在最终发布按钮之前，不会自动点击发布、发表或群发。
+一键发布的定义是“当前任务中有内容且 Publisher 已接入的所有平台”。当前顺序为百家号 → 今日头条文章 → 微信图文，共享一个 Chrome 持久化 profile 生命周期，并始终停在最终发布按钮之前，不会自动点击发布、发表或群发。
 
 ## CLI Publisher
 

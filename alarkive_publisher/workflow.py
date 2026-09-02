@@ -13,6 +13,7 @@ from .routing import (
     normalize_target,
 )
 from .wechat import run_wechat
+from .toutiao_article import run_toutiao_article
 from .workflow_controller import WorkflowController
 from .xiaohongshu import PublisherError, run_xiaohongshu, start_browser
 
@@ -78,6 +79,9 @@ def run_publisher_workflow(
             if target == "baijiahao":
                 run_baijiahao(page, post, controller)
                 ready_message = "百家号已准备完成"
+            elif target == "toutiao_article":
+                run_toutiao_article(page, post, controller)
+                ready_message = "今日头条文章已准备完成"
             elif target == "wechat_image":
                 page = run_wechat(page, post, controller)
                 ready_message = "微信图文已准备完成"
@@ -156,6 +160,9 @@ def run_single_platform_workflow(
         elif target == "baijiahao":
             run_baijiahao(page, post, controller)
             ready_message = "百家号已准备完成"
+        elif target == "toutiao_article":
+            run_toutiao_article(page, post, controller)
+            ready_message = "今日头条文章已准备完成"
         else:
             page = run_wechat(page, post, controller)
             ready_message = "微信图文已准备完成"

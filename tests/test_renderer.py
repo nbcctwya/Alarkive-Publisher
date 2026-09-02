@@ -75,11 +75,14 @@ class MarkdownRendererTests(unittest.TestCase):
 
         xiaohongshu = render_for_platform("xiaohongshu", source)
         baijiahao = render_for_platform("baijiahao", source)
+        toutiao_article = render_for_platform("toutiao_article", source)
         wechat = render_for_platform("wechat", source)
 
         self.assertEqual(xiaohongshu.text, "重点")
         self.assertIsNone(xiaohongshu.html)
         self.assertEqual(baijiahao.text, "重点")
         self.assertEqual(baijiahao.html, "<p><strong>重点</strong></p>")
+        self.assertEqual(toutiao_article.text, "重点")
+        self.assertEqual(toutiao_article.html, baijiahao.html)
         self.assertEqual(wechat.text, "重点")
         self.assertIsNone(wechat.html)

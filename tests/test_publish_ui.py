@@ -94,7 +94,7 @@ class PublishUiStateTests(unittest.TestCase):
 
         for label in ("公域长文", "微信长文", "微信图文", "微头条"):
             self.assertIn(label, rendered)
-        for label in ("发布百家号", "发布微信图文"):
+        for label in ("发布百家号", "发布今日头条文章", "发布微信图文"):
             self.assertIn(label, rendered)
         self.assertIn("今日头条文章", rendered)
         self.assertIn("微信公众号长文", rendered)
@@ -112,6 +112,7 @@ class PublishUiStateTests(unittest.TestCase):
 
         self.assertIn("公域长文", rendered)
         self.assertIn("发布百家号", rendered)
+        self.assertIn("发布今日头条文章", rendered)
         self.assertIn("微信图文", rendered)
         self.assertIn("无内容", rendered)
         self.assertNotIn("发布微信图文</button>", rendered)
@@ -188,7 +189,7 @@ class PublishUiStateTests(unittest.TestCase):
             side_effect=PublisherUnsupportedPlatformError("该平台 Publisher 尚未接入。"),
         ), patch.object(web_app, "_render_detail_error", return_value=error_response) as render_error:
             response = asyncio.run(
-                web_app.publish_platform(None, "post-id", "toutiao_article")  # type: ignore[arg-type]
+                web_app.publish_platform(None, "post-id", "unknown")  # type: ignore[arg-type]
             )
         self.assertIs(response, error_response)
         render_error.assert_called_once_with(

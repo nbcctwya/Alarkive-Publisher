@@ -74,17 +74,22 @@ class ContentVariantWorkflowTests(unittest.TestCase):
             calls.append("wechat_image")
             return page
 
+        def toutiao(*args) -> None:
+            del args
+            calls.append("toutiao_article")
+
         with patch("alarkive_publisher.workflow.start_browser", return_value=(playwright, context, page)), patch(
             "alarkive_publisher.workflow.run_baijiahao", side_effect=baijiahao
-        ), patch("alarkive_publisher.workflow.run_wechat", side_effect=wechat):
+        ), patch("alarkive_publisher.workflow.run_toutiao_article", side_effect=toutiao), patch(
+            "alarkive_publisher.workflow.run_wechat", side_effect=wechat
+        ):
             run_publisher_workflow(post_with("public_long", "wechat_short"), Path("."), controller)
 
-        self.assertEqual(calls, ["baijiahao", "wechat_image"])
-        self.assertEqual([event[1] for event in controller.events if event[0] == "start"], ["baijiahao", "wechat_image"])
+        self.assertEqual(calls, ["baijiahao", "toutiao_article", "wechat_image"])
+        self.assertEqual([event[1] for event in controller.events if event[0] == "start"], ["baijiahao", "toutiao_article", "wechat_image"])
 
     def test_single_supported_variant_runs_only_its_target(self) -> None:
         for variant, target, runner_name in (
-            ("public_long", "baijiahao", "baijiahao"),
             ("wechat_short", "wechat_image", "wechat_image"),
         ):
             with self.subTest(variant=variant), tempfile.TemporaryDirectory():
@@ -101,7 +106,9 @@ class ContentVariantWorkflowTests(unittest.TestCase):
 
                 with patch("alarkive_publisher.workflow.start_browser", return_value=(playwright, context, page)), patch(
                     "alarkive_publisher.workflow.run_baijiahao", side_effect=record
-                ), patch("alarkive_publisher.workflow.run_wechat", side_effect=record):
+                ), patch("alarkive_publisher.workflow.run_toutiao_article", side_effect=record), patch(
+                    "alarkive_publisher.workflow.run_wechat", side_effect=record
+                ):
                     run_publisher_workflow(post_with(variant), Path("."), controller)
                 self.assertEqual(calls, [runner_name])
 
@@ -122,27 +129,42 @@ class ContentVariantWorkflowTests(unittest.TestCase):
         playwright = type("Playwright", (), {"stop": lambda self: None})()
         with patch("alarkive_publisher.workflow.start_browser", return_value=(playwright, context, page)), patch(
             "alarkive_publisher.workflow.run_baijiahao"
-        ) as baijiahao, patch("alarkive_publisher.workflow.run_wechat") as wechat:
+        ) as baijiahao, patch("alarkive_publisher.workflow.run_toutiao_article") as toutiao, patch(
+            "alarkive_publisher.workflow.run_wechat"
+        ) as wechat:
             run_publisher_workflow(
                 post_with("public_long", "wechat_long", "toutiao_short"),
                 Path("."),
                 controller,
             )
         baijiahao.assert_called_once()
+        toutiao.assert_called_once()
         wechat.assert_not_called()
 
-    def test_single_missing_or_unimplemented_target_fails_before_browser(self) -> None:
+    def test_single_missing_target_fails_before_browser(self) -> None:
         post = post_with("public_long")
         with patch("alarkive_publisher.workflow.start_browser") as start_browser:
             with self.assertRaisesRegex(ValueError, "不包含微信图文所需内容"):
                 run_single_platform_workflow(
                     post, Path("."), "wechat_image", RecordingController()
                 )
-            with self.assertRaisesRegex(ValueError, "Publisher 尚未接入"):
-                run_single_platform_workflow(
-                    post, Path("."), "toutiao_article", RecordingController()
-                )
         start_browser.assert_not_called()
+
+    def test_single_toutiao_article_runs_only_toutiao_article(self) -> None:
+        post = post_with("public_long")
+        controller = RecordingController()
+        page = object()
+        context = type("Context", (), {"close": lambda self: None})()
+        playwright = type("Playwright", (), {"stop": lambda self: None})()
+        with patch("alarkive_publisher.workflow.start_browser", return_value=(playwright, context, page)), patch(
+            "alarkive_publisher.workflow.run_toutiao_article"
+        ) as toutiao, patch("alarkive_publisher.workflow.run_baijiahao") as baijiahao, patch(
+            "alarkive_publisher.workflow.run_wechat"
+        ) as wechat:
+            run_single_platform_workflow(post, Path("."), "toutiao_article", controller)
+        toutiao.assert_called_once_with(page, post, controller)
+        baijiahao.assert_not_called()
+        wechat.assert_not_called()
 
 
 if __name__ == "__main__":
