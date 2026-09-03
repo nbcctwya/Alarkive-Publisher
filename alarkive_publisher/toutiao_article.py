@@ -332,25 +332,22 @@ def _is_login_page(page: Page) -> bool:
     return phone is not None and code is not None
 
 
-def _check_login(page: Page, controller: WorkflowController) -> None:
-    _navigate(page, HOME_URL)
-    if not _is_login_page(page):
-        return
-
+def _wait_for_login(controller: WorkflowController) -> None:
     # The user completes login in the visible persistent Chrome profile.  No
     # account, password, SMS code, or cookie is ever supplied by this module.
     controller.wait_for_user(
         "toutiao_article",
         "login",
-        "需要登录今日头条。请在打开的 Chrome 浏览器中完成登录。",
+        "需要登录今日头条。请在打开的 Chrome 浏览器中完成登录，然后点击“继续”。",
         "登录完成后继续。",
     )
+
+
+def _check_login(page: Page, controller: WorkflowController) -> None:
     _navigate(page, HOME_URL)
-    if _is_login_page(page):
-        raise PublisherError(
-            "Checking Toutiao article login",
-            "Login was not completed. The page is still showing the Toutiao login screen.",
-        )
+    while _is_login_page(page):
+        _wait_for_login(controller)
+        _navigate(page, HOME_URL)
 
 
 def _close_dialogs(page: Page) -> None:
@@ -387,13 +384,15 @@ def _close_dialogs(page: Page) -> None:
                 continue
 
 
-def _open_editor(page: Page) -> None:
+def _open_editor(page: Page, controller: WorkflowController | None = None) -> None:
     _navigate(page, EDITOR_URL)
-    if _is_login_page(page):
-        raise PublisherError(
-            "Opening Toutiao article editor",
-            "Toutiao redirected back to the login page.",
-        )
+    # The homepage can pass its initial check before the SPA discovers an
+    # expired session. Treat the editor's redirect as another manual login
+    # pause in the SAME workflow, not a failure that discards prior progress.
+    controller = controller or CLIWorkflowController()
+    while _is_login_page(page):
+        _wait_for_login(controller)
+        _navigate(page, EDITOR_URL)
     _close_dialogs(page)
     LOGGER.info("Toutiao editor opened: url=%s", page.url)
 
@@ -1677,21 +1676,22 @@ def _verify_ready_state(
             "Checking Toutiao article publish area",
             "Could not find the final publish control for manual review.",
         )
-    draft_idle = _wait_for_draft_idle(page)
+    # 按用户要求暂时停用草稿保存等待；保留调用和提示逻辑，便于恢复。
+    # draft_idle = _wait_for_draft_idle(page)
     LOGGER.info(
         "Toutiao article ready: url=%s logical_images=%d final_controls=%s (not clicked)",
         page.url,
         image_count,
         final_controls,
     )
-    if not draft_idle:
-        warning = (
-            "头条仍显示“草稿保存中”，尚未确认保存成功。"
-            "请在头条页面检查并处理保存状态后，再点击继续；"
-            "离开页面可能丢失未保存内容。"
-        )
-        LOGGER.warning(warning)
-        return warning
+    # if not draft_idle:
+    #     warning = (
+    #         "头条仍显示“草稿保存中”，尚未确认保存成功。"
+    #         "请在头条页面检查并处理保存状态后，再点击继续；"
+    #         "离开页面可能丢失未保存内容。"
+    #     )
+    #     LOGGER.warning(warning)
+    #     return warning
     return None
 
 
@@ -1702,8 +1702,8 @@ def run_toutiao_article(
 ) -> str | None:
     """Prepare ``post.public_long`` in Toutiao's article editor.
 
-    Return an optional draft-saving warning for the workflow's manual review
-    pause. This function never clicks a final ``发布``/``发表`` control.
+    The draft-saving wait/warning path is retained but currently disabled.
+    This function never clicks a final ``发布``/``发表`` control.
     """
 
     if post.public_long is None:
@@ -1722,7 +1722,7 @@ def run_toutiao_article(
     )
 
     controller.step("toutiao_article", "opening_editor", "打开文章创作页")
-    _run_toutiao_step(page, "Opening Toutiao article editor", lambda: _open_editor(page))
+    _run_toutiao_step(page, "Opening Toutiao article editor", lambda: _open_editor(page, controller))
 
     controller.step("toutiao_article", "filling_content", "填写标题和正文")
     inline_blocks: tuple[ContentBlock, ...] = ()

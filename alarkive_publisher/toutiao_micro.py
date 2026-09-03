@@ -85,20 +85,17 @@ def _navigate(page: Page) -> None:
 def _open_editor(page: Page, controller: WorkflowController) -> None:
     _navigate(page)
     deadline = time.monotonic() + 45
-    login_requested = False
     retried = False
     while time.monotonic() < deadline:
         if _editor(page).count() == 1 and _editor(page).is_visible():
             break
-        if _is_login(page) and page.get_by_text("扫码登录", exact=True).count():
-            if login_requested:
-                raise PublisherError("Checking Toutiao micro login", "微头条登录尚未完成。")
+        if _is_login(page):
             controller.wait_for_user(
-                "toutiao_micro", "login", "请在 Chrome 中完成头条登录。", "登录完成后继续。"
+                "toutiao_micro", "login", "请在 Chrome 中完成头条登录，然后点击“继续”。", "登录完成后继续。"
             )
-            login_requested = True
             _navigate(page)
             deadline = time.monotonic() + 45
+            retried = False
             continue
         retry = page.get_by_role("button", name="重试加载", exact=True)
         if not retried and retry.count() and retry.is_visible():

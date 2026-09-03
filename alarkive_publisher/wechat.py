@@ -99,7 +99,7 @@ def _is_login_page(page: Page) -> bool:
 def _is_account_selection_page(page: Page) -> bool:
     text = _visible_text(page)
     return bool(re.search(r"选择公众号|选择账号|请选择公众号", text)) and not re.search(
-        r"新的创作|内容管理|Alark知新录", text
+        r"新的创作|内容管理", text
     )
 
 
@@ -121,35 +121,24 @@ def _navigate_home(page: Page) -> None:
 
 
 def _check_login(page: Page, controller: WorkflowController | None = None) -> None:
+    controller = controller or CLIWorkflowController()
     _navigate_home(page)
-    if _is_login_page(page):
-        if controller is None:
-            controller = CLIWorkflowController()
-        controller.wait_for_user(
-            "wechat",
-            "login",
-            "需要登录微信公众号。请在打开的浏览器中完成扫码或登录。",
-            "登录完成后继续。",
-        )
-        _navigate_home(page)
+    while True:
         if _is_login_page(page):
-            raise PublisherError("Checking WeChat login", "Login was not completed.")
-
-    if _is_account_selection_page(page):
-        if controller is None:
-            controller = CLIWorkflowController()
-        controller.wait_for_user(
-            "wechat",
-            "account_selection",
-            "请在打开的浏览器中选择目标公众号。",
-            "已选择目标账号并进入后台后继续。",
-        )
-        _navigate_home(page)
-        if _is_login_page(page) or _is_account_selection_page(page):
-            raise PublisherError(
-                "Checking WeChat login",
-                "Login was not completed or a target account was not selected.",
+            controller.wait_for_user(
+                "wechat", "login",
+                "需要登录微信公众号。请在 Chrome 中完成登录，然后点击“继续”。",
+                "登录完成后继续。",
             )
+        elif _is_account_selection_page(page):
+            controller.wait_for_user(
+                "wechat", "account_selection",
+                "请在 Chrome 中选择目标公众号，进入后台后点击“继续”。",
+                "已选择目标账号并进入后台后继续。",
+            )
+        else:
+            return
+        _navigate_home(page)
 
 
 def _close_known_popups(page: Page) -> None:
@@ -161,7 +150,7 @@ def _close_known_popups(page: Page) -> None:
             candidate.click()
 
 
-def _open_sticker_editor(page: Page) -> Page:
+def _enter_sticker_editor(page: Page) -> Page:
     _close_known_popups(page)
     sticker = _first_interactable(page.get_by_text("贴图", exact=True))
     if sticker is None:
@@ -179,7 +168,10 @@ def _open_sticker_editor(page: Page) -> Page:
         # a new one.
         editor = page
 
-    _wait_for_dom(editor)
+    return editor
+
+
+def _validate_sticker_editor(editor: Page) -> None:
     try:
         editor.wait_for_url(re.compile(r"type=77|createType=8"), timeout=30_000)
     except TimeoutError:
@@ -214,7 +206,25 @@ def _open_sticker_editor(page: Page) -> Page:
             "Opening WeChat sticker editor",
             "Could not locate WeChat sticker/image-post editor.",
         )
-    return editor
+
+
+def _open_sticker_editor(page: Page, controller: WorkflowController | None = None) -> Page:
+    controller = controller or CLIWorkflowController()
+    while True:
+        if _is_login_page(page) or _is_account_selection_page(page):
+            _check_login(page, controller)
+        try:
+            page = _enter_sticker_editor(page)
+            _wait_for_dom(page)
+            if _is_login_page(page) or _is_account_selection_page(page):
+                continue
+            _validate_sticker_editor(page)
+            return page
+        except (TimeoutError, PublisherError):
+            # A session can expire while opening either a popup or this tab.
+            # Only retry known login/account pages; keep real editor errors.
+            if not (_is_login_page(page) or _is_account_selection_page(page)):
+                raise
 
 
 def _title_locator(page: Page) -> Locator:
@@ -509,7 +519,7 @@ def run_wechat(
     )
 
     controller.step("wechat", "opening_editor", "打开贴图编辑器")
-    editor = _run_step("Opening WeChat sticker editor", lambda: _open_sticker_editor(page))
+    editor = _run_step("Opening WeChat sticker editor", lambda: _open_sticker_editor(page, controller))
 
     controller.step(
         "wechat",

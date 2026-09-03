@@ -17,10 +17,10 @@ from alarkive_publisher.workflow_controller import WebWorkflowController
 
 
 class ToutiaoDraftWorkflowTests(unittest.TestCase):
-    def test_busy_draft_waits_for_web_continue_then_runs_remaining_platforms(self):
+    def test_busy_draft_skips_save_wait_then_runs_remaining_platforms_after_review(self):
         self._run_and_continue(single=False, draft_idle=False)
 
-    def test_single_article_keeps_warning_and_waits_before_closing(self):
+    def test_single_article_skips_save_wait_but_keeps_manual_review(self):
         self._run_and_continue(single=True, draft_idle=False)
 
     def test_idle_draft_keeps_normal_ready_flow(self):
@@ -48,7 +48,7 @@ class ToutiaoDraftWorkflowTests(unittest.TestCase):
             stack.enter_context(patch(prefix + "_read_locator_value", side_effect=lambda el: "标题" if el is title else "正文"))
             stack.enter_context(patch(prefix + "_editor_image_count", return_value=0))
             stack.enter_context(patch(prefix + "_visible_final_publish_controls", return_value=("发布",)))
-            stack.enter_context(patch(prefix + "_wait_for_draft_idle", return_value=draft_idle))
+            draft_wait = stack.enter_context(patch(prefix + "_wait_for_draft_idle", return_value=draft_idle))
             errors = []
 
             def run():
@@ -82,7 +82,8 @@ class ToutiaoDraftWorkflowTests(unittest.TestCase):
                 self.assertEqual(workflow["current_step"], "ready")
                 self.assertEqual(workflow["platforms"]["toutiao_article"]["status"], "ready")
                 self.assertIsNone(workflow["error"])
-                self.assertEqual("尚未确认保存成功" in workflow["message"], not draft_idle)
+                draft_wait.assert_not_called()
+                self.assertNotIn("尚未确认保存成功", workflow["message"])
                 wechat.assert_not_called()
                 micro.assert_not_called()
                 context.close.assert_not_called()
@@ -98,7 +99,8 @@ class ToutiaoDraftWorkflowTests(unittest.TestCase):
                 self.assertEqual(errors, [])
                 final = load_publish_state(folder)["workflow"]
                 self.assertEqual(final["status"], "completed")
-                self.assertEqual("尚未确认保存成功" in final["platforms"]["toutiao_article"]["message"], not draft_idle)
+                draft_wait.assert_not_called()
+                self.assertNotIn("尚未确认保存成功", final["platforms"]["toutiao_article"]["message"])
                 context.close.assert_called_once()
                 browser.stop.assert_called_once()
                 if single:

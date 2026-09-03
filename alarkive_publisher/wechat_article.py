@@ -31,22 +31,44 @@ def _compact(text: str) -> str:
     return re.sub(r"\s+", "", text.replace("\u200b", ""))
 
 
-def _check_login(page: Page, controller: WorkflowController) -> None:
-    def navigate() -> None:
-        try:
-            page.goto(HOME_URL, wait_until="commit", timeout=60_000)
-        except PlaywrightError as exc:
-            if "interrupted by another navigation" not in str(exc) or not page.url.startswith(HOME_URL):
-                raise
-        page.wait_for_load_state("domcontentloaded", timeout=30_000)
-        page.locator("body").wait_for()
+def _login_step(page: Page) -> str | None:
+    if "/login" in page.url.lower():
+        return "login"
+    text = page.locator("body").inner_text(timeout=2_000)
+    if (
+        "微信扫一扫，选择公众平台账号登录" in text
+        or page.locator('input[placeholder="邮箱/微信号"]').first.is_visible()
+        or (page.get_by_text("使用账号登录", exact=True).first.is_visible()
+            and page.get_by_text("登录", exact=True).first.is_visible())
+    ):
+        return "login"
+    if re.search(r"选择公众号|选择账号|请选择公众号", text) and not re.search(r"新的创作|内容管理", text):
+        return "account_selection"
+    return None
 
-    navigate()
-    if not page.get_by_text("新的创作", exact=True).is_visible():
-        controller.wait_for_user(
-            TARGET, "login", "请在 Chrome 中登录微信公众号并选择目标账号。", "登录完成后继续。"
+
+def _navigate_home(page: Page) -> None:
+    try:
+        page.goto(HOME_URL, wait_until="commit", timeout=60_000)
+    except PlaywrightError as exc:
+        if "interrupted by another navigation" not in str(exc) or not page.url.startswith(HOME_URL):
+            raise
+    page.wait_for_load_state("domcontentloaded", timeout=30_000)
+    page.locator("body").wait_for()
+
+
+def _check_login(page: Page, controller: WorkflowController) -> None:
+    _navigate_home(page)
+    while step := _login_step(page):
+        message = (
+            "请在 Chrome 中选择目标公众号，进入后台后点击“继续”。"
+            if step == "account_selection" else
+            "请在 Chrome 中登录微信公众号，然后点击“继续”。"
         )
-        navigate()
+        controller.wait_for_user(
+            TARGET, step, message, "登录并选择目标公众号后继续。"
+        )
+        _navigate_home(page)
     page.get_by_text("新的创作", exact=True).wait_for(state="visible", timeout=30_000)
 
 
@@ -67,7 +89,7 @@ def _title(page: Page) -> Locator:
     raise PublisherError("Locating WeChat article editor", "没有找到可见的公众号长文标题栏。")
 
 
-def _open_editor(page: Page) -> Page:
+def _enter_editor(page: Page) -> Page:
     # Only the new-article entry is activated; never an existing draft.
     entry = page.get_by_text("文章", exact=True)
     entry.wait_for(state="visible", timeout=30_000)
@@ -77,11 +99,26 @@ def _open_editor(page: Page) -> Page:
         editor = popup.value
     except TimeoutError:
         editor = page
-    editor.wait_for_load_state("domcontentloaded")
-    editor.locator(BODY_SELECTOR).wait_for(state="visible", timeout=30_000)
-    _title(editor).wait_for(state="visible")
-    editor.bring_to_front()
     return editor
+
+
+def _open_editor(page: Page, controller: WorkflowController | None = None) -> Page:
+    controller = controller or CLIWorkflowController()
+    while True:
+        if _login_step(page):
+            _check_login(page, controller)
+        try:
+            page = _enter_editor(page)
+            page.wait_for_load_state("domcontentloaded")
+            if _login_step(page):
+                continue
+            page.locator(BODY_SELECTOR).wait_for(state="visible", timeout=30_000)
+            _title(page).wait_for(state="visible")
+            page.bring_to_front()
+            return page
+        except (TimeoutError, PublisherError):
+            if not _login_step(page):
+                raise
 
 
 def _snapshot(page: Page) -> dict:
@@ -376,7 +413,7 @@ def run_wechat_article(page: Page, post: PostContent, controller: WorkflowContro
     controller.step(TARGET, "login", "检查微信公众号登录状态")
     run_step("Checking WeChat article login", lambda: _check_login(page, controller))
     controller.step(TARGET, "editor", "打开微信公众号长文编辑器")
-    editor = run_step("Opening WeChat article editor", lambda: _open_editor(page))
+    editor = run_step("Opening WeChat article editor", lambda: _open_editor(page, controller))
     controller.step(TARGET, "content", "填写长文标题、完整正文和图片")
     run_step("Preparing WeChat article content", lambda: _prepare_content(editor, content))
     controller.step(TARGET, "verify", "标题、正文、图片及重绘校验通过；等待人工检查")
