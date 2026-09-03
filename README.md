@@ -98,6 +98,8 @@ python -m pip install -r requirements.txt
 
 程序默认使用本机 Google Chrome，并在项目根目录使用独立的 `.browser-data/` profile。也可以按需安装 Playwright Chromium 并设置 `ALARKIVE_BROWSER_CHANNEL=chromium`。
 
+公共浏览器启动工具位于 `alarkive_publisher/browser.py`（`start_browser()`），公共异常与步骤执行工具位于 `alarkive_publisher/publisher_common.py`（`PublisherError`、`run_step()`）。各平台发布器直接使用这些公共模块，不再从小红书发布器借用工具；小红书旧导入路径保留兼容引用。
+
 ## Web Content Manager
 
 启动：

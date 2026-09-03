@@ -40,7 +40,7 @@ from alarkive_publisher.toutiao_article import (  # noqa: E402
     run_toutiao_article,
 )
 from alarkive_publisher.workflow_controller import CLIWorkflowController  # noqa: E402
-from alarkive_publisher.xiaohongshu import start_browser  # noqa: E402
+from alarkive_publisher.browser import start_browser  # noqa: E402
 
 
 def _describe(locator) -> dict[str, object]:

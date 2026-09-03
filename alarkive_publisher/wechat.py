@@ -9,7 +9,7 @@ from playwright.sync_api import Locator, Page, TimeoutError
 from .content import PlatformContent, PostContent
 from .renderer import render_for_platform
 from .workflow_controller import CLIWorkflowController, WorkflowController
-from .xiaohongshu import PublisherError, _run_step
+from .publisher_common import PublisherError, run_step as _run_step
 
 
 HOME_URL = "https://mp.weixin.qq.com/"

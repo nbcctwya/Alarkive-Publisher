@@ -11,7 +11,7 @@ from alarkive_publisher.baijiahao import (
 )
 from alarkive_publisher.content import PlatformContent
 from alarkive_publisher.inline_images import ImageBlock, TextBlock
-from alarkive_publisher.xiaohongshu import PublisherError
+from alarkive_publisher.publisher_common import PublisherError
 
 
 class _SingleFileInput:

@@ -4,7 +4,9 @@ from pathlib import Path
 from typing import Callable
 
 from .baijiahao import run_baijiahao
+from .browser import start_browser
 from .content import PostContent
+from .publisher_common import PublisherError
 from .routing import (
     AVAILABLE_PUBLISHERS,
     PUBLISHER_REGISTRY,
@@ -15,7 +17,7 @@ from .routing import (
 from .wechat import run_wechat
 from .toutiao_article import run_toutiao_article
 from .workflow_controller import WorkflowController
-from .xiaohongshu import PublisherError, run_xiaohongshu, start_browser
+from .xiaohongshu import run_xiaohongshu
 
 
 BrowserStarted = Callable[[object, object, object], None]

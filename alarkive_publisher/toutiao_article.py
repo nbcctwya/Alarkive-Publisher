@@ -29,7 +29,7 @@ from .inline_images import (
 )
 from .renderer import RenderedContent, render_for_platform
 from .workflow_controller import CLIWorkflowController, WorkflowController
-from .xiaohongshu import PublisherError, _run_step
+from .publisher_common import PublisherError, run_step as _run_step
 
 
 LOGGER = logging.getLogger(__name__)
