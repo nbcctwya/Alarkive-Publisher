@@ -8,8 +8,10 @@ is never performed here.
 
 from __future__ import annotations
 
+import logging
 import re
 import time
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +31,8 @@ from .renderer import RenderedContent, render_for_platform
 from .workflow_controller import CLIWorkflowController, WorkflowController
 from .xiaohongshu import PublisherError, _run_step
 
+
+LOGGER = logging.getLogger(__name__)
 
 HOME_URL = "https://mp.toutiao.com/profile_v4/"
 EDITOR_URL = "https://mp.toutiao.com/profile_v4/graphic/publish"
@@ -51,6 +55,10 @@ _UPLOAD_FAILURE_RE = re.compile(
     re.IGNORECASE,
 )
 _COVER_CONTROL_RE = re.compile(r"封面|头图|头像|cover|header", re.IGNORECASE)
+_FINAL_PUBLISH_CONTROL_RE = re.compile(
+    r"^(?:预览并发布|确认发布|立即发布|发布|发表|提交)$",
+    re.IGNORECASE,
+)
 _IMAGE_CONTROL_RE = re.compile(
     r"image|picture|photo|upload|media|icon[-_]?pic|icon[-_]?image|"
     r"插图|配图|图片|图像|照片|媒体",
@@ -214,9 +222,23 @@ def _capture_debug_snapshot(page: Page) -> None:
             pass
         try:
             html = frame.evaluate(
-                "() => document.documentElement ? document.documentElement.outerHTML : ''"
+                """() => {
+                    if (!document.body) return '';
+                    const clone = document.body.cloneNode(true);
+                    clone.querySelectorAll('script, style, noscript, iframe, input[type=password], input[type=hidden]').forEach(el => el.remove());
+                    const allowed = new Set(['id', 'class', 'role', 'title', 'alt', 'type', 'accept', 'placeholder', 'contenteditable', 'disabled', 'aria-disabled', 'aria-label', 'aria-busy', 'data-e2e', 'data-testid', 'data-status', 'data-upload-status', 'web_uri', '__syl_tag', 'src', 'href']);
+                    for (const el of [clone, ...clone.querySelectorAll('*')]) {
+                        for (const attr of Array.from(el.attributes)) {
+                            if (!allowed.has(attr.name)) el.removeAttribute(attr.name);
+                            else if (attr.name === 'src' || attr.name === 'href') {
+                                el.setAttribute(attr.name, attr.value.startsWith('data:') ? '[embedded image]' : attr.value.split(/[?#]/)[0]);
+                            }
+                        }
+                    }
+                    return clone.outerHTML;
+                }"""
             )
-            dom_parts.append(f"<!-- frame {index}: {frame.url} -->\n{html}")
+            dom_parts.append(f"<!-- frame {index}: {frame.url.split('?', 1)[0]} -->\n{html}")
         except Exception as exc:
             dom_parts.append(f"<!-- frame {index}: unavailable: {type(exc).__name__} -->")
         try:
@@ -357,10 +379,9 @@ def _close_dialogs(page: Page) -> None:
     )
     for label in ("跳过", "知道了", "我知道了", "完成"):
         candidate = _first_interactable(roots.get_by_text(label, exact=True))
-        if candidate is None:
-            candidate = _first_interactable(page.get_by_text(label, exact=True))
         if candidate is not None:
             try:
+                _assert_not_final_publish_control(candidate)
                 candidate.click()
             except Exception:
                 continue
@@ -374,6 +395,7 @@ def _open_editor(page: Page) -> None:
             "Toutiao redirected back to the login page.",
         )
     _close_dialogs(page)
+    LOGGER.info("Toutiao editor opened: url=%s", page.url)
 
 
 def _wait_for_interactable_selector(page: Page, selectors: list[str]) -> None:
@@ -433,6 +455,17 @@ def _fill_editable(locator: Locator, value: str, page: Page) -> None:
 
 def _fill_title(page: Page, content: PlatformContent) -> None:
     title = _title_locator(page)
+    try:
+        tag = title.evaluate("element => element.tagName")
+        placeholder = title.get_attribute("placeholder")
+    except Exception:
+        tag = "unknown"
+        placeholder = None
+    LOGGER.info(
+        "Toutiao title input: tag=%s placeholder=%r",
+        tag,
+        placeholder,
+    )
     _fill_editable(title, content.title, page)
     if _read_locator_value(title).strip() != content.title:
         raise PublisherError(
@@ -656,6 +689,15 @@ def _clear_editor(body: Locator) -> None:
 
 def _fill_body(page: Page, body: Locator, content: PlatformContent) -> None:
     rendered = render_for_platform("toutiao_article", content.body)
+    try:
+        editor_class = body.get_attribute("class")
+    except Exception:
+        editor_class = None
+    LOGGER.info(
+        "Toutiao body editor: class=%r prosemirror=%s",
+        editor_class,
+        _is_prosemirror_editor(body),
+    )
     if _is_prosemirror_editor(body):
         try:
             _clear_editor(body)
@@ -682,6 +724,21 @@ def _fill_body(page: Page, body: Locator, content: PlatformContent) -> None:
                     "Filling Toutiao article content",
                     "The Toutiao article editor did not contain the provided content after filling.",
                 )
+    stable = 0
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        page.wait_for_timeout(250)
+        actual = _read_locator_value(body)
+        if _editor_validation_text(rendered.text) in _editor_validation_text(actual):
+            stable += 1
+            if stable >= 2:
+                return
+        else:
+            stable = 0
+    raise PublisherError(
+        "Filling Toutiao article content",
+        "The Toutiao article content did not survive the editor rerender.",
+    )
 
 
 def _focus_editor_for_image_insertion(editor: Locator) -> None:
@@ -747,9 +804,27 @@ def _control_label(locator: Locator) -> str:
         return ""
 
 
+def _assert_not_final_publish_control(locator: Locator) -> None:
+    """Refuse any click target whose semantics can submit the article."""
+
+    labels = [_locator_text(locator)]
+    for attribute in ("aria-label", "title", "value", "data-action", "data-command"):
+        try:
+            labels.append(locator.get_attribute(attribute) or "")
+        except Exception:
+            pass
+    label = " ".join(labels)
+    if re.search(r"发布|发表|提交|publish|submit", label, re.I):
+        raise PublisherError(
+            "Toutiao article publish safety",
+            "Refused to activate a control that may submit or publish the article.",
+        )
+
+
 def _editor_toolbar_scopes(page: Page, editor: Locator | None) -> list[Locator]:
+    del page
     toolbar_selector = (
-        '[role="toolbar"], [class*="toolbar"], [class*="syl"], '
+        '[role="toolbar"], .syl-editor-toolbar, .syl-toolbar, '
         '[data-toolbar], [data-editor-toolbar]'
     )
     scopes: list[Locator] = []
@@ -759,22 +834,9 @@ def _editor_toolbar_scopes(page: Page, editor: Locator | None) -> list[Locator]:
         for level in range(1, 5):
             try:
                 parent = editor.locator("xpath=" + ".." + "/.." * (level - 1))
-                scopes.append(parent)
                 scopes.append(parent.locator(toolbar_selector))
             except Exception:
                 continue
-    for frame in page.frames:
-        scopes.extend(
-            [
-                frame.locator(
-                    '[role="toolbar"]:has(.ProseMirror), '
-                    '[class*="toolbar"]:has(.ProseMirror), '
-                    '[data-toolbar]:has(.ProseMirror), '
-                    '[data-editor-toolbar]:has(.ProseMirror)'
-                ),
-                frame.locator(toolbar_selector),
-            ]
-        )
     return scopes
 
 
@@ -816,53 +878,13 @@ def _image_control_in_scope(scope: Locator) -> Locator | None:
 def _image_trigger(page: Page, editor: Locator | None = None) -> Locator | None:
     """Find an enabled image control after the editor owns the selection."""
 
-    # The toolbar scoped to the editor is authoritative. Page-level controls
-    # are deliberately considered only after these candidates fail.
+    # A missing editor-owned control is a failure, never a reason to inspect
+    # cover uploads or the page-wide material manager.
     for scope in _editor_toolbar_scopes(page, editor):
         candidate = _image_control_in_scope(scope)
         if candidate is not None:
             return candidate
 
-    for frame in page.frames:
-        controls = frame.locator('button, [role="button"], [tabindex]')
-        for index in range(controls.count()):
-            candidate = controls.nth(index)
-            if not _is_enabled_control(candidate):
-                continue
-            try:
-                if candidate.get_attribute("contenteditable") == "true":
-                    continue
-                near_editor = candidate.evaluate(
-                    """
-                    element => {
-                        const editor = document.querySelector('.ProseMirror');
-                        if (!editor) return false;
-                        let current = element;
-                        for (let depth = 0; current && depth < 6; depth += 1) {
-                            if (current.contains(editor)) return true;
-                            current = current.parentElement;
-                        }
-                        return false;
-                    }
-                    """
-                )
-            except Exception:
-                continue
-            if not near_editor:
-                continue
-            label = _control_label(candidate)
-            if _COVER_CONTROL_RE.search(label) or re.search(r"预览并发布|发布", label, re.I):
-                continue
-            if _IMAGE_CONTROL_RE.search(label):
-                return candidate
-
-    # Last-resort semantic fallback. It is still enabled-only and explicitly
-    # excludes cover/header actions, so a missing inline UI fails fast instead
-    # of silently uploading to an unrelated media input.
-    for frame in page.frames:
-        candidate = _image_control_in_scope(frame)
-        if candidate is not None:
-            return candidate
     return None
 
 
@@ -1106,19 +1128,21 @@ def _successful_upload_present(context: ToutiaoImageUploadContext) -> bool:
     if context.root is None:
         return False
     try:
+        if not _new_thumbnail_present(context):
+            return False
         # The current Toutiao drawer renders ``.success`` only after the
         # uploader receives the server response.  A blob preview alone is not
         # completion: it is rendered before the asynchronous upload starts.
+        # ``.success`` itself is a state marker whose child icon can have no
+        # rendered box, so attachment is authoritative; requiring
+        # ``is_visible()`` incorrectly times out on a completed upload.
         success = context.root.locator(
             '.pic-select-image-item .success, '
             '[data-upload-status="success"], [data-status="success"]'
         )
-        for index in range(success.count()):
-            if success.nth(index).is_visible():
-                return True
+        return success.count() > 0
     except Exception:
         return False
-    return False
 
 
 def _raise_if_upload_failed(page: Page, context: ToutiaoImageUploadContext) -> None:
@@ -1266,6 +1290,7 @@ def _confirm_inline_upload(
     candidate = _find_inline_confirm_control(context.root)
     if candidate is None:
         return False
+    _assert_not_final_publish_control(candidate)
     candidate.click()
     return True
 
@@ -1291,11 +1316,113 @@ def _wait_for_inline_upload_closed(
     )
 
 
-def _editor_image_count(editor: Locator) -> int:
+def _editor_image_signatures(editor: Locator) -> tuple[str, ...]:
+    """Return one stable signature per logical article image."""
+
     try:
-        return editor.locator("img").count()
+        # Toutiao's Syl/ProseMirror image node contains both a canonical image
+        # under a hidden ``templ`` element and a second editable preview under
+        # ``mask``.  Counting every ``img`` therefore doubles the logical
+        # article-image count.  Prefer the canonical model image when present.
+        canonical = editor.locator(
+            '[__syl_tag="true"] templ .pgc-img img, '
+            'templ .pgc-img img'
+        )
+        images = canonical if canonical.count() else editor.locator("img")
+        signatures: list[str] = []
+        for index in range(images.count()):
+            image = images.nth(index)
+            signature = (
+                image.get_attribute("web_uri")
+                or image.get_attribute("data-uri")
+                or image.get_attribute("src")
+                or f"image-{index}"
+            )
+            signatures.append(signature.split("?", 1)[0])
+        return tuple(signatures)
     except Exception:
-        return 0
+        return ()
+
+
+def _editor_image_count(editor: Locator) -> int:
+    return len(_editor_image_signatures(editor))
+
+
+def _new_image_signature(
+    before: tuple[str, ...], after: tuple[str, ...]
+) -> str:
+    remaining = Counter(after)
+    remaining.subtract(before)
+    added = [signature for signature, count in remaining.items() for _ in range(count) if count > 0]
+    if len(added) != 1:
+        raise PublisherError(
+            "Uploading Toutiao article image",
+            f"Expected one new logical editor image, found {len(added)}.",
+        )
+    return added[0]
+
+
+def _editor_content_sequence(editor: Locator) -> tuple[tuple[str, str], ...]:
+    """Read merged text/image order from ProseMirror's top-level model nodes."""
+
+    raw = editor.evaluate(
+        """
+        element => Array.from(element.children).map(child => {
+            const image = child.querySelector('templ .pgc-img img') ||
+                (child.matches('img') ? child : null);
+            if (image) {
+                const signature = image.getAttribute('web_uri') ||
+                    image.getAttribute('data-uri') || image.getAttribute('src') || '';
+                return {kind: 'image', value: signature.split('?', 1)[0]};
+            }
+            return {kind: 'text', value: child.innerText || child.textContent || ''};
+        })
+        """
+    )
+    sequence: list[tuple[str, str]] = []
+    for item in raw:
+        kind = str(item.get("kind") or "")
+        value = str(item.get("value") or "")
+        if kind == "text":
+            value = _editor_validation_text(value)
+            if not value:
+                continue
+            if sequence and sequence[-1][0] == "text":
+                sequence[-1] = ("text", sequence[-1][1] + value)
+            else:
+                sequence.append(("text", value))
+        elif kind == "image" and value:
+            sequence.append(("image", value))
+    return tuple(sequence)
+
+
+def _assert_inline_content_sequence(
+    editor: Locator,
+    blocks: tuple[ContentBlock, ...],
+    image_signatures: tuple[str, ...],
+) -> None:
+    expected: list[tuple[str, str]] = []
+    image_index = 0
+    for block in blocks:
+        if isinstance(block, TextBlock):
+            value = _editor_validation_text(
+                render_for_platform("toutiao_article", block.text).text
+            )
+            if not value:
+                continue
+            if expected and expected[-1][0] == "text":
+                expected[-1] = ("text", expected[-1][1] + value)
+            else:
+                expected.append(("text", value))
+        else:
+            expected.append(("image", image_signatures[image_index]))
+            image_index += 1
+    actual = _editor_content_sequence(editor)
+    if actual != tuple(expected):
+        raise PublisherError(
+            "Filling Toutiao article content",
+            f"The Toutiao editor block order was {actual!r}; expected {tuple(expected)!r}.",
+        )
 
 
 def _wait_for_editor_images(page: Page, editor: Locator, minimum: int) -> None:
@@ -1350,8 +1477,9 @@ def _open_inline_image_upload(
         ) from exc
 
 
-def _insert_image(page: Page, editor: Locator, image: Path) -> None:
-    before_count = _editor_image_count(editor)
+def _insert_image(page: Page, editor: Locator, image: Path) -> str:
+    before_signatures = _editor_image_signatures(editor)
+    before_count = len(before_signatures)
     # The current toolbar can remain disabled/unmounted until the ProseMirror
     # editor owns focus, so focus it before resolving the image control.
     _focus_editor_for_image_insertion(editor)
@@ -1361,8 +1489,17 @@ def _insert_image(page: Page, editor: Locator, image: Path) -> None:
             "Uploading Toutiao article image",
             "Could not find the article editor's inline image control.",
         )
+    _assert_not_final_publish_control(trigger)
+    LOGGER.info(
+        "Toutiao inline image: file=%s before_count=%d trigger=%s enabled=%s",
+        image.name,
+        before_count,
+        _compact_text(_control_label(trigger))[:240],
+        _is_enabled_control(trigger),
+    )
     path = str(image.resolve())
     context = _open_inline_image_upload(page, trigger)
+    LOGGER.info("Toutiao inline image upload mode: %s", context.mode)
 
     if context.mode == "native":
         if context.chooser is None:
@@ -1373,26 +1510,42 @@ def _insert_image(page: Page, editor: Locator, image: Path) -> None:
         context.chooser.set_files(path, timeout=30_000)  # type: ignore[attr-defined]
     else:
         file_input = _wait_for_image_file_input(page, context)
+        LOGGER.info(
+            "Toutiao inline file input: id=%r class=%r",
+            file_input.get_attribute("id"),
+            file_input.get_attribute("class"),
+        )
         file_input.set_input_files(path, timeout=30_000)
 
     _wait_for_upload_started(page, context, editor, before_count)
+    LOGGER.info("Toutiao inline image upload started: file=%s", image.name)
     _wait_for_upload_complete(page, context, editor, before_count)
+    LOGGER.info("Toutiao inline image upload ready: file=%s", image.name)
 
     if context.root is not None:
         confirm = _find_inline_confirm_control(context.root)
         if confirm is not None:
             _select_uploaded_toutiao_image(context)
+            LOGGER.info("Toutiao uploaded asset selected: file=%s", image.name)
             if not _confirm_inline_upload(page, context):
                 raise PublisherError(
                     "Uploading Toutiao article image",
                     "Toutiao showed an inline-image confirmation UI but it was not usable.",
                 )
             _wait_for_inline_upload_closed(page, context)
+            LOGGER.info("Toutiao inline image confirmation completed: file=%s", image.name)
 
     _wait_for_editor_images(page, editor, before_count + 1)
     # Upload dialogs can steal focus or restore a stale ProseMirror selection.
     # Re-establish the caret before the next text/image block is appended.
     _focus_editor_for_image_insertion(editor)
+    after_signatures = _editor_image_signatures(editor)
+    signature = _new_image_signature(before_signatures, after_signatures)
+    LOGGER.info(
+        "Toutiao editor logical image count after insert: %d",
+        len(after_signatures),
+    )
+    return signature
 
 
 def _inline_image_blocks(
@@ -1433,11 +1586,14 @@ def _fill_body_with_inline_images(
 ) -> None:
     before_count = _editor_image_count(body)
     image_blocks = sum(1 for block in blocks if isinstance(block, ImageBlock))
+    image_signatures: list[str] = []
     for block in blocks:
         if isinstance(block, TextBlock):
             _append_rendered_html(body, render_for_platform("toutiao_article", block.text))
         else:
-            _insert_image(page, body, content.images[block.index - 1])
+            image_signatures.append(
+                _insert_image(page, body, content.images[block.index - 1])
+            )
     expected_count = before_count + image_blocks
     actual_count = _editor_image_count(body)
     if actual_count != expected_count:
@@ -1450,6 +1606,86 @@ def _fill_body_with_inline_images(
             "Filling Toutiao article content",
             "The Toutiao article editor did not contain the provided text after inline image insertion.",
         )
+    _assert_inline_content_sequence(body, blocks, tuple(image_signatures))
+
+
+def _wait_for_draft_idle(page: Page, timeout: int = 30_000) -> None:
+    deadline = time.monotonic() + timeout / 1_000
+    while time.monotonic() < deadline:
+        text = _visible_text(page)
+        if not re.search(r"草稿保存中|正在保存", text):
+            return
+        page.wait_for_timeout(500)
+    raise PublisherError(
+        "Checking Toutiao article draft",
+        "Toutiao still reported that the draft was saving after 30 seconds.",
+    )
+
+
+def _visible_final_publish_controls(page: Page) -> tuple[str, ...]:
+    labels: list[str] = []
+    for frame in page.frames:
+        controls = frame.locator('button, [role="button"]')
+        for index in range(controls.count()):
+            candidate = controls.nth(index)
+            if not _is_interactable(candidate):
+                continue
+            label = _compact_text(_locator_text(candidate))
+            if _FINAL_PUBLISH_CONTROL_RE.fullmatch(label):
+                labels.append(label)
+    return tuple(labels)
+
+
+def _verify_ready_state(
+    page: Page,
+    content: PlatformContent,
+    body: Locator,
+    blocks: tuple[ContentBlock, ...],
+    has_inline_images: bool,
+) -> None:
+    page.wait_for_timeout(750)
+    title = _title_locator(page)
+    if _read_locator_value(title).strip() != content.title:
+        raise PublisherError(
+            "Checking Toutiao article title",
+            "The Toutiao title changed after the editor rerender.",
+        )
+    if has_inline_images:
+        if not _inline_text_blocks_are_present(body, blocks):
+            raise PublisherError(
+                "Checking Toutiao article content",
+                "The Toutiao text changed after inline image insertion.",
+            )
+    else:
+        rendered = render_for_platform("toutiao_article", content.body)
+        if _editor_validation_text(rendered.text) not in _editor_validation_text(
+            _read_locator_value(body)
+        ):
+            raise PublisherError(
+                "Checking Toutiao article content",
+                "The Toutiao text changed after the editor rerender.",
+            )
+    image_count = _editor_image_count(body)
+    if image_count != len(content.images):
+        raise PublisherError(
+            "Checking Toutiao article images",
+            f"The Toutiao editor contains {image_count} logical images; expected {len(content.images)}.",
+        )
+    page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+    page.wait_for_timeout(300)
+    _wait_for_draft_idle(page)
+    final_controls = _visible_final_publish_controls(page)
+    if not final_controls:
+        raise PublisherError(
+            "Checking Toutiao article publish area",
+            "Could not find the final publish control for manual review.",
+        )
+    LOGGER.info(
+        "Toutiao article ready: url=%s logical_images=%d final_controls=%s (not clicked)",
+        page.url,
+        image_count,
+        final_controls,
+    )
 
 
 def run_toutiao_article(
@@ -1516,21 +1752,42 @@ def run_toutiao_article(
     )
 
     controller.step("toutiao_article", "final_check", "完成最终检查")
+    _run_toutiao_step(
+        page,
+        "Checking Toutiao article before publish",
+        lambda: _verify_ready_state(
+            page,
+            content,
+            body,
+            inline_blocks,
+            has_inline_images,
+        ),
+    )
 
 
 def _insert_images_at_end(page: Page, body: Locator, images: tuple[Path, ...]) -> None:
     """Preserve the public_long no-marker rule: append images in list order."""
 
     before_count = _editor_image_count(body)
+    before_signatures = _editor_image_signatures(body)
     _focus_editor_for_image_insertion(body)
+    inserted_signatures: list[str] = []
     for image in images:
-        _insert_image(page, body, image)
+        inserted_signatures.append(_insert_image(page, body, image))
     actual_count = _editor_image_count(body)
     expected_count = before_count + len(images)
     if actual_count != expected_count:
         raise PublisherError(
             "Uploading Toutiao article images",
             f"The Toutiao article editor contains {actual_count} images; expected {expected_count} after upload.",
+        )
+    after_signatures = _editor_image_signatures(body)
+    if after_signatures[: len(before_signatures)] != before_signatures or after_signatures[
+        len(before_signatures) :
+    ] != tuple(inserted_signatures):
+        raise PublisherError(
+            "Uploading Toutiao article images",
+            "The Toutiao article images were not appended in manifest order.",
         )
 
 

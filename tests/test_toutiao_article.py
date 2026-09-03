@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from playwright.sync_api import Error as PlaywrightError
 
@@ -17,9 +17,15 @@ from alarkive_publisher.toutiao_article import (
     _fill_body_with_inline_images,
     _fill_title,
     _inline_image_blocks,
+    _editor_image_count,
     _insert_images_at_end,
     _insert_image,
     _select_uploaded_toutiao_image,
+    _successful_upload_present,
+    _assert_inline_content_sequence,
+    _assert_not_final_publish_control,
+    _confirm_inline_upload,
+    _wait_for_draft_idle,
     _wait_for_upload_complete,
     _wait_for_upload_started,
     run_toutiao_article,
@@ -65,6 +71,51 @@ def _post(content: ContentVariant | None) -> PostContent:
 
 
 class ToutiaoArticleRoutingTests(unittest.TestCase):
+    def test_publish_safety_rejects_all_submit_semantics(self) -> None:
+        for label in ("发布", "发表", "预览并发布", "确认发布", "立即发布", "定时发布", "提交", "Publish", "Submit"):
+            with self.subTest(label=label):
+                control = Mock()
+                control.get_attribute.return_value = ""
+                with patch("alarkive_publisher.toutiao_article._locator_text", return_value=label):
+                    with self.assertRaisesRegex(Exception, "Refused"):
+                        _assert_not_final_publish_control(control)
+                control.click.assert_not_called()
+
+    def test_confirmation_looks_only_inside_retained_image_root(self) -> None:
+        page, root, control = Mock(), Mock(), Mock()
+        context = ToutiaoImageUploadContext(frame=Mock(), root=root, mode="drawer")
+        with patch("alarkive_publisher.toutiao_article._find_inline_confirm_control", return_value=control) as find, patch(
+            "alarkive_publisher.toutiao_article._assert_not_final_publish_control"
+        ) as guard:
+            self.assertTrue(_confirm_inline_upload(page, context))
+        find.assert_called_once_with(root)
+        guard.assert_called_once_with(control)
+        control.click.assert_called_once_with()
+        self.assertEqual(page.mock_calls, [])
+
+    def test_dom_order_checks_text_boundaries_not_just_image_count(self) -> None:
+        blocks = (TextBlock("A"), ImageBlock(3), TextBlock("B"), ImageBlock(1), TextBlock("C"), ImageBlock(2))
+        expected = (("text", "A"), ("image", "three"), ("text", "B"), ("image", "one"), ("text", "C"), ("image", "two"))
+        with patch("alarkive_publisher.toutiao_article._editor_content_sequence", return_value=expected):
+            _assert_inline_content_sequence(Mock(), blocks, ("three", "one", "two"))
+        misplaced = (("text", "ABC"), ("image", "three"), ("image", "one"), ("image", "two"))
+        with patch("alarkive_publisher.toutiao_article._editor_content_sequence", return_value=misplaced):
+            with self.assertRaisesRegex(Exception, "block order"):
+                _assert_inline_content_sequence(Mock(), blocks, ("three", "one", "two"))
+
+    def test_partial_marker_appends_unreferenced_images(self) -> None:
+        content = ContentVariant("Title", "A\n\n[[image:2]]\n\nB", (Path("1.png"), Path("2.png"), Path("3.png")))
+        blocks, marked = _inline_image_blocks(content)
+        self.assertTrue(marked)
+        self.assertEqual([block.index for block in blocks if isinstance(block, ImageBlock)], [2, 1, 3])
+
+    def test_draft_timeout_does_not_report_ready(self) -> None:
+        with patch("alarkive_publisher.toutiao_article.time.monotonic", side_effect=[0, 0, 31]), patch(
+            "alarkive_publisher.toutiao_article._visible_text", return_value="草稿保存中..."
+        ):
+            with self.assertRaisesRegex(Exception, "still reported"):
+                _wait_for_draft_idle(Mock())
+
     def test_editor_entrypoint_is_the_current_graphic_publish_page(self) -> None:
         self.assertEqual(EDITOR_URL, "https://mp.toutiao.com/profile_v4/graphic/publish")
 
@@ -178,6 +229,8 @@ class ToutiaoArticleRoutingTests(unittest.TestCase):
         ), patch(
             "alarkive_publisher.toutiao_article._editor_image_count",
             side_effect=[0, 3],
+        ), patch(
+            "alarkive_publisher.toutiao_article._assert_inline_content_sequence",
         ):
             _fill_body_with_inline_images(object(), object(), content, blocks)  # type: ignore[arg-type]
 
@@ -200,10 +253,13 @@ class ToutiaoArticleRoutingTests(unittest.TestCase):
             "alarkive_publisher.toutiao_article._focus_editor_for_image_insertion"
         ), patch(
             "alarkive_publisher.toutiao_article._insert_image",
-            side_effect=lambda page, body, image: calls.append(image),
+            side_effect=lambda page, body, image: calls.append(image) or image.name,
         ), patch(
             "alarkive_publisher.toutiao_article._editor_image_count",
             side_effect=[0, 3],
+        ), patch(
+            "alarkive_publisher.toutiao_article._editor_image_signatures",
+            side_effect=[(), ("01.png", "02.png", "03.png")],
         ):
             _insert_images_at_end(object(), object(), images)  # type: ignore[arg-type]
         self.assertEqual(calls, list(images))
@@ -221,6 +277,9 @@ class ToutiaoArticleRoutingTests(unittest.TestCase):
         with patch(
             "alarkive_publisher.toutiao_article._editor_image_count",
             return_value=0,
+        ), patch(
+            "alarkive_publisher.toutiao_article._editor_image_signatures",
+            side_effect=[(), ("01.png",)],
         ), patch(
             "alarkive_publisher.toutiao_article._focus_editor_for_image_insertion",
             side_effect=lambda editor: events.append("focus"),
@@ -387,6 +446,63 @@ class ToutiaoArticleRoutingTests(unittest.TestCase):
 
         self.assertEqual(page.waits, 3)
 
+    def test_upload_success_accepts_attached_zero_size_status_marker(self) -> None:
+        class Status:
+            def is_visible(self) -> bool:
+                return False
+
+        class Collection:
+            def count(self) -> int:
+                return 1
+
+            def nth(self, index: int) -> Status:
+                del index
+                return Status()
+
+        class Root:
+            def locator(self, selector: str) -> Collection:
+                self.selector = selector
+                return Collection()
+
+        root = Root()
+        context = ToutiaoImageUploadContext(
+            frame=object(), root=root, mode="drawer"  # type: ignore[arg-type]
+        )
+        with patch(
+            "alarkive_publisher.toutiao_article._new_thumbnail_present",
+            return_value=True,
+        ):
+            self.assertTrue(_successful_upload_present(context))
+        self.assertIn(".pic-select-image-item .success", root.selector)
+
+    def test_editor_image_count_uses_canonical_syl_model_images(self) -> None:
+        class Image:
+            def get_attribute(self, name: str) -> str | None:
+                return "canonical-image" if name == "web_uri" else None
+
+        class Collection:
+            def __init__(self, values: list[Image]) -> None:
+                self.values = values
+
+            def count(self) -> int:
+                return len(self.values)
+
+            def nth(self, index: int) -> Image:
+                return self.values[index]
+
+        class Editor:
+            def __init__(self) -> None:
+                self.selectors: list[str] = []
+
+            def locator(self, selector: str) -> Collection:
+                self.selectors.append(selector)
+                count = 1 if "templ .pgc-img img" in selector else 2
+                return Collection([Image() for _ in range(count)])
+
+        editor = Editor()
+        self.assertEqual(_editor_image_count(editor), 1)  # type: ignore[arg-type]
+        self.assertEqual(len(editor.selectors), 1)
+
     def test_select_uploaded_toutiao_image_chooses_new_thumbnail(self) -> None:
         class Thumbnail:
             def __init__(self, src: str) -> None:
@@ -484,7 +600,9 @@ class ToutiaoArticlePublisherTests(unittest.TestCase):
             "alarkive_publisher.toutiao_article._fill_body"
         ) as fill_body, patch(
             "alarkive_publisher.toutiao_article._insert_images_at_end"
-        ) as insert_images:
+        ) as insert_images, patch(
+            "alarkive_publisher.toutiao_article._verify_ready_state"
+        ):
             run_toutiao_article(object(), post, controller)  # type: ignore[arg-type]
 
         plan.assert_called_once_with(content)
