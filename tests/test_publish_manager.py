@@ -17,8 +17,10 @@ from alarkive_publisher.web.publish_manager import (
 )
 from alarkive_publisher.web.publish_state import (
     load_publish_state,
+    mark_interrupted,
     mark_published,
     mark_unpublished,
+    update_workflow,
 )
 from alarkive_publisher.web.storage import ImageData, save_post
 
@@ -120,6 +122,68 @@ class PublishManagerTests(unittest.TestCase):
                 "completed",
             )
             self.assertFalse(manager.get_publish_state(package.name)["published"])
+
+    def test_interrupted_wait_is_restored_for_the_live_job(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = self._make_post(root)
+
+            def fake_runner(post, project_root, controller):
+                del post, project_root
+                controller.ready("baijiahao", "百家号已准备完成", "继续")
+                controller.completed("完成")
+
+            manager = PublishManager(root, workflow_runner=fake_runner)
+            manager.start_publish(package.name)
+            wait_for(lambda: manager.get_publish_state(package.name)["workflow"]["status"] == "waiting")
+            mark_interrupted(package)
+
+            restored = manager.reconcile_post_if_needed(package.name)
+            self.assertEqual(restored["workflow"]["status"], "waiting")
+            self.assertIsNone(restored["workflow"]["error"])
+            manager.continue_publish(package.name)
+            wait_for(lambda: not manager.has_active_workflow())
+
+    def test_failed_full_workflow_resumes_without_repeating_ready_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            variants = ("public_long", "wechat_long", "wechat_short", "toutiao_short")
+            package = save_post(
+                "恢复流程",
+                {variant: variant for variant in variants},
+                {variant: "正文" for variant in variants},
+                [ImageData("image.png", PNG)],
+                posts_root=root,
+            ).directory
+            manager = PublishManager(root)
+            mark_published(package)
+            for target in ("baijiahao", "toutiao_article"):
+                update_workflow(
+                    package, platform=target, platform_status="ready",
+                    platform_message=target + " ready",
+                )
+            update_workflow(
+                package, status="failed", current_platform="wechat_article",
+                current_step="login", message="browser closed",
+                platform="wechat_article", platform_status="failed",
+                error={"platform": "wechat_article", "step": "login", "type": "Error", "message": "browser closed"},
+            )
+            calls = []
+
+            def resumed(post, project_root, controller, *, on_browser_started, skip_targets):
+                del post, project_root, on_browser_started
+                calls.append(skip_targets)
+                controller.completed("完成")
+
+            with patch("alarkive_publisher.workflow.run_publisher_workflow", resumed):
+                manager.start_publish(package.name)
+                wait_for(lambda: not manager.has_active_workflow())
+
+            self.assertEqual(calls, [("baijiahao", "toutiao_article")])
+            state = manager.get_publish_state(package.name)
+            self.assertEqual(state["workflow"]["platforms"]["baijiahao"]["status"], "ready")
+            self.assertEqual(state["workflow"]["platforms"]["toutiao_article"]["status"], "ready")
+            self.assertTrue(state["published"])
 
     def test_single_platform_does_not_require_or_change_full_publish_marker(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -473,6 +537,11 @@ class PublishManagerTests(unittest.TestCase):
 
             initialize_workflow(package)
             restarted = PublishManager(root, workflow_runner=lambda *args: None)
+            self.assertEqual(
+                restarted.get_publish_state(package.name)["workflow"]["status"],
+                "running",
+            )
+            restarted.reconcile_interrupted_workflows()
 
             self.assertEqual(
                 restarted.get_publish_state(package.name)["workflow"]["status"],

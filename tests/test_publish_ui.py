@@ -63,6 +63,7 @@ class PublishUiStateTests(unittest.TestCase):
         self.assertIn("微头条", rendered)
         self.assertNotIn("小红书", rendered)
         self.assertNotIn("xiaohongshu", rendered)
+        self.assertNotIn("暂未接入发布器", rendered)
         self.assertIn("function buildPublicLongPrompt()", script)
         self.assertIn("function buildWechatLongPrompt()", script)
         self.assertIn("function buildWechatShortPrompt()", script)
@@ -185,6 +186,31 @@ class PublishUiStateTests(unittest.TestCase):
         # app.js owns the live continuation label; the server-side action is
         # still present and targets the shared continue endpoint.
         self.assertIn("continue_publish", rendered)
+
+    def test_interrupted_detail_offers_resume_without_repeating_ready_platforms(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            _, post = self._detail_context(Path(temp))
+            post["workflow_resumable"] = True
+            workflow = post["publish_state"]["workflow"]
+            workflow["status"] = "interrupted"
+            workflow["platforms"]["baijiahao"]["status"] = "ready"
+            rendered = web_app.templates.get_template("detail.html").render(
+                request=_TemplateRequest(), post=post
+            )
+
+        self.assertIn("继续未完成流程", rendered)
+
+    def test_active_interrupted_task_keeps_cancel_action(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            _, post = self._detail_context(Path(temp))
+            post["publisher_active"] = True
+            post["publisher_owns_post"] = True
+            post["publish_state"]["workflow"]["status"] = "interrupted"
+            rendered = web_app.templates.get_template("detail.html").render(
+                request=_TemplateRequest(), post=post
+            )
+        self.assertIn("取消发布准备", rendered)
+        self.assertIn('action="/cancel_publish"', rendered)
 
     def test_single_platform_route_passes_canonical_target_to_manager(self) -> None:
         with patch.object(web_app.publish_manager, "start_platform_publish") as start:

@@ -3,10 +3,10 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from alarkive_publisher.content import ContentVariant, PostContent
-from alarkive_publisher.workflow import run_publisher_workflow, run_single_platform_workflow
+from alarkive_publisher.workflow import _open_workflow_page, run_publisher_workflow, run_single_platform_workflow
 from alarkive_publisher.workflow_controller import WorkflowController
 
 
@@ -58,6 +58,39 @@ def post_with(*variants: str) -> PostContent:
 
 
 class ContentVariantWorkflowTests(unittest.TestCase):
+    def test_closed_platform_tab_switches_to_another_open_tab(self) -> None:
+        closed, replacement = Mock(), Mock()
+        closed.is_closed.return_value = True
+        replacement.is_closed.return_value = False
+        closed.context.pages = [closed, replacement]
+
+        self.assertIs(_open_workflow_page(closed), replacement)
+        replacement.bring_to_front.assert_called_once()
+
+    def test_resumed_workflow_skips_ready_targets(self) -> None:
+        controller = RecordingController()
+        page = object()
+        context = type("Context", (), {"close": lambda self: None})()
+        playwright = type("Playwright", (), {"stop": lambda self: None})()
+        post = post_with("public_long", "wechat_long", "wechat_short", "toutiao_short")
+        with patch("alarkive_publisher.workflow.start_browser", return_value=(playwright, context, page)), patch(
+            "alarkive_publisher.workflow.run_baijiahao"
+        ) as baijiahao, patch("alarkive_publisher.workflow.run_toutiao_article") as toutiao, patch(
+            "alarkive_publisher.workflow.run_wechat_article", return_value=page
+        ) as wechat_article, patch(
+            "alarkive_publisher.workflow.run_wechat", return_value=page
+        ) as wechat_image, patch("alarkive_publisher.workflow.run_toutiao_micro") as micro:
+            run_publisher_workflow(
+                post, Path("."), controller,
+                skip_targets=("baijiahao", "toutiao_article"),
+            )
+
+        baijiahao.assert_not_called()
+        toutiao.assert_not_called()
+        wechat_article.assert_called_once()
+        wechat_image.assert_called_once()
+        micro.assert_called_once()
+
     def test_public_and_wechat_short_run_in_target_order(self) -> None:
         controller = RecordingController()
         page = object()

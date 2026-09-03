@@ -20,6 +20,7 @@
     data-continue-url="{{ url_for('continue_publish', post_id=post.id) }}"
     data-reset-url="{{ url_for('mark_unpublished_post', post_id=post.id) }}"
     data-close-url="{{ url_for('close_publish_browser', post_id=post.id) }}"
+    data-cancel-url="{{ url_for('cancel_publish', post_id=post.id) }}"
     data-browser-open="{{ 'true' if post.browser_open else 'false' }}"
     data-full-workflow-available="{{ 'true' if post.has_available_publisher else 'false' }}"
     data-full-workflow-targets="{{ post.full_workflow_targets | join(',') }}"
@@ -42,6 +43,12 @@
             {% elif post.publisher_active %}
             {% if publish_state.published %}<form method="post" action="{{ url_for('mark_unpublished_post', post_id=post.id) }}"><button class="button button-secondary" type="submit">重新置为未发布</button></form>{% endif %}
             <span class="workflow-action-note">发布流程进行中</span>
+            {% if post.publisher_owns_post %}
+            <form method="post" action="{{ url_for('cancel_publish', post_id=post.id) }}" onsubmit="return confirm('取消当前发布准备并关闭共享浏览器？\n\n已在平台发表的内容不会撤回。');"><button class="button button-secondary" type="submit" {% if post.cancel_requested %}disabled{% endif %}>{{ '正在取消…' if post.cancel_requested else '取消发布准备' }}</button></form>
+            {% endif %}
+            {% elif post.workflow_resumable %}
+            {% if publish_state.published %}<form method="post" action="{{ url_for('mark_unpublished_post', post_id=post.id) }}"><button class="button button-secondary" type="submit">重新置为未发布</button></form>{% endif %}
+            <form method="post" action="{{ url_for('publish_post', post_id=post.id) }}"><button class="button button-primary" type="submit">继续未完成流程</button></form>
             {% elif publish_state.published %}
             <form method="post" action="{{ url_for('mark_unpublished_post', post_id=post.id) }}"><button class="button button-secondary" type="submit">重新置为未发布</button></form>
             {% elif post.has_available_publisher %}
@@ -68,7 +75,7 @@
         <p class="workflow-message" id="workflow-message">{{ publish_state.workflow.message or '' }}</p>
         <p class="workflow-error" id="workflow-error">{% if publish_state.workflow.error %}{{ publish_state.workflow.error.message }}{% endif %}</p>
         <div id="workflow-continue">
-            {% if publish_state.workflow.status == 'waiting' %}
+            {% if publish_state.workflow.status == 'waiting' and not post.cancel_requested %}
             <form method="post" action="{{ url_for('continue_publish', post_id=post.id) }}"><button class="button button-primary" type="submit">继续</button></form>
             {% endif %}
         </div>
@@ -116,5 +123,5 @@
         {% endfor %}
     </div>
 </section>
-<script src="{{ url_for('static', path='app.js') }}"></script>
+<script src="{{ url_for('static', path='app.js') }}?v=workflow-controls-2"></script>
 {% endblock %}

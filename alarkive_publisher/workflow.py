@@ -44,12 +44,43 @@ def _available_workflow_targets(post: PostContent) -> list[str]:
     ]
 
 
+def _open_workflow_page(page: object) -> object:
+    """Use another live tab when the user closed the previous platform tab."""
+
+    try:
+        closed = page.is_closed()  # type: ignore[attr-defined]
+        if not isinstance(closed, bool):
+            return page
+        if not closed:
+            return page
+        pages = page.context.pages  # type: ignore[attr-defined]
+        if not isinstance(pages, (list, tuple)):
+            return page
+        candidates = [
+            candidate
+            for candidate in pages
+            if not candidate.is_closed()
+        ]
+    except AttributeError:
+        # Lightweight integrations/tests may provide an opaque page object.
+        return page
+    if not candidates:
+        raise RuntimeError("共享浏览器中没有仍然打开的页面，无法继续下一个发布平台。")
+    replacement = candidates[-1]
+    try:
+        replacement.bring_to_front()
+    except Exception:
+        pass
+    return replacement
+
+
 def run_publisher_workflow(
     post: PostContent,
     project_root: Path,
     controller: WorkflowController,
     *,
     on_browser_started: BrowserStarted | None = None,
+    skip_targets: tuple[str, ...] = (),
 ) -> None:
     """Run all present targets with an implemented Publisher.
 
@@ -57,7 +88,10 @@ def run_publisher_workflow(
     intentionally ignored by this executable workflow.
     """
 
-    active_targets = _available_workflow_targets(post)
+    skipped = set(skip_targets)
+    active_targets = [
+        target for target in _available_workflow_targets(post) if target not in skipped
+    ]
     if not active_targets:
         raise ValueError(
             "当前任务包含内容，但没有已接入的可发布平台。"
@@ -77,6 +111,7 @@ def run_publisher_workflow(
             on_browser_started(playwright, context, page)
 
         for index, target in enumerate(active_targets):
+            page = _open_workflow_page(page)
             current_target = target
             current_step = f"Preparing {target}"
             controller.start_platform(target)

@@ -56,6 +56,10 @@ class WorkflowBrowserClosedError(RuntimeError):
     """The shared browser was closed before the workflow was finished."""
 
 
+class WorkflowCancelledError(RuntimeError):
+    """The user requested cancellation of preparation, not platform publication."""
+
+
 class CLIWorkflowController(WorkflowController):
     """Keep the v0.1.2 terminal interaction behind the shared controller."""
 
@@ -114,6 +118,7 @@ class WebWorkflowController(WorkflowController):
         self.post_folder = Path(post_folder).expanduser()
         self._wait_lock = threading.Lock()
         self._continue_event = threading.Event()
+        self._cancel_event = threading.Event()
         self._waiting = False
         self._current_platform: str | None = None
         self._current_step: str | None = None
@@ -172,6 +177,7 @@ class WebWorkflowController(WorkflowController):
         self.step(platform, "start", f"正在准备{PLATFORM_LABELS[platform]}")
 
     def step(self, platform: str, step: str, message: str) -> None:
+        self._raise_if_cancelled()
         self._update(
             status="running",
             platform=platform,
@@ -182,6 +188,7 @@ class WebWorkflowController(WorkflowController):
         )
 
     def system_step(self, step: str, message: str) -> None:
+        self._raise_if_cancelled()
         self._update(status="running", platform=None, step=step, message=message)
 
     def _wait(
@@ -193,6 +200,7 @@ class WebWorkflowController(WorkflowController):
         platform_status: str,
         resume_platform_status: str,
     ) -> None:
+        self._raise_if_cancelled()
         with self._wait_lock:
             self._continue_event.clear()
             self._waiting = True
@@ -205,6 +213,7 @@ class WebWorkflowController(WorkflowController):
                 platform_message=message,
             )
         while not self._continue_event.wait(timeout=0.5):
+            self._raise_if_cancelled()
             if self._browser_probe is None:
                 continue
             try:
@@ -221,6 +230,7 @@ class WebWorkflowController(WorkflowController):
                 )
         with self._wait_lock:
             self._waiting = False
+        self._raise_if_cancelled()
         self._update(
             status="running",
             platform=platform,
@@ -262,12 +272,49 @@ class WebWorkflowController(WorkflowController):
 
     def continue_if_waiting(self) -> bool:
         with self._wait_lock:
-            if not self._waiting or self._continue_event.is_set():
+            if not self._waiting or self._continue_event.is_set() or self.cancel_requested:
                 return False
             self._continue_event.set()
             return True
 
+    @property
+    def cancel_requested(self) -> bool:
+        return self._cancel_event.is_set()
+
+    def request_cancel(self) -> None:
+        self._cancel_event.set()
+        self._continue_event.set()
+
+    def _raise_if_cancelled(self) -> None:
+        if self.cancel_requested:
+            with self._wait_lock:
+                self._waiting = False
+            raise WorkflowCancelledError("用户取消了发布准备流程。")
+
+    def cancelled(self) -> None:
+        update_workflow(
+            self.post_folder, status="cancelled",
+            message="发布准备已取消，浏览器已关闭；已在平台发表的内容不会撤回。",
+            error=None,
+        )
+
+    def is_waiting_for(self, platform: str | None, step: str | None) -> bool:
+        """Report the in-memory wait point without changing it."""
+
+        if platform is None:
+            return False
+        platform = normalize_target(platform)
+        with self._wait_lock:
+            return bool(
+                self._waiting
+                and not self.cancel_requested
+                and self._current_platform is not None
+                and normalize_target(self._current_platform) == platform
+                and self._current_step == step
+            )
+
     def completed(self, message: str) -> None:
+        self._raise_if_cancelled()
         self._update(
             status="completed",
             platform=None,
@@ -281,6 +328,8 @@ class WebWorkflowController(WorkflowController):
         step: str,
         exc: BaseException,
     ) -> None:
+        if self.cancel_requested:
+            return
         error = {
             "platform": platform,
             "step": step,

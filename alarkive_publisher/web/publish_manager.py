@@ -20,6 +20,8 @@ from .publish_state import (
     load_publish_state,
     mark_interrupted,
     mark_published,
+    resume_workflow,
+    update_workflow,
 )
 from .storage import POSTS_DIR, get_post_folder
 
@@ -66,6 +68,7 @@ class _ActiveJob:
     context: object | None = None
     browser_open: bool = False
     close_requested: threading.Event = field(default_factory=threading.Event)
+    skip_targets: tuple[str, ...] = ()
 
 
 class PublishManager:
@@ -89,9 +92,8 @@ class PublishManager:
         self._platform_workflow_runner = platform_workflow_runner
         self._lock = threading.RLock()
         self._active_job: _ActiveJob | None = None
-        self._reconcile_interrupted_workflows()
 
-    def _reconcile_interrupted_workflows(self) -> None:
+    def reconcile_interrupted_workflows(self) -> None:
         """Mark persisted waits/runs interrupted once after a server restart."""
 
         if not self.posts_root.is_dir():
@@ -130,6 +132,28 @@ class PublishManager:
             workflow_mode="all",
             mark_local_published=True,
         )
+
+    @staticmethod
+    def _ready_targets_for_resume(post: PostContent, state: dict) -> tuple[str, ...]:
+        workflow = state["workflow"]
+        if workflow["workflow_mode"] != "all" or workflow["status"] not in {"failed", "interrupted", "cancelled"}:
+            return ()
+        active = [
+            target for target in WORKFLOW_TARGETS
+            if target in AVAILABLE_PUBLISHERS
+            and post.has_content(PUBLISHER_REGISTRY[target].variant)
+        ]
+        ready = tuple(
+            target for target in active
+            if workflow["platforms"][target]["status"] == "ready"
+        )
+        return ready if ready and len(ready) < len(active) else ()
+
+    def can_resume(self, post_id: str) -> bool:
+        folder = get_post_folder(post_id, self.posts_root)
+        post = load_post(folder)
+        state = load_publish_state(folder)
+        return bool(self._ready_targets_for_resume(post, state))
 
     def start_publish_all(self, post_id: str) -> dict:
         """Explicit name for the established all-platform workflow."""
@@ -204,7 +228,11 @@ class PublishManager:
                         f"当前任务不包含{label}所需内容，无法启动单平台发布。"
                     )
             current = load_publish_state(post_folder)
-            if mark_local_published and current["published"]:
+            ready_targets = (
+                self._ready_targets_for_resume(post, current)
+                if workflow_mode == "all" else ()
+            )
+            if mark_local_published and current["published"] and not ready_targets:
                 raise PublisherAlreadyPublishedError(
                     "该任务已经标记为已发布，请先重新置为未发布。"
                 )
@@ -217,14 +245,17 @@ class PublishManager:
                 controller=controller,
                 workflow_mode=workflow_mode,
                 target_platform=target_platform,
+                skip_targets=ready_targets,
             )
             # Register before writing the running state so a simultaneous read
             # can never mistake a just-starting job for a stale server restart.
             self._active_job = job
             try:
-                if mark_local_published:
+                if mark_local_published and not current["published"]:
                     mark_published(post_folder)
-                if workflow_mode == "all":
+                if ready_targets:
+                    resume_workflow(post_folder, ready_targets)
+                elif workflow_mode == "all":
                     # Keep the established all-platform initialization call
                     # and path exactly as it was before v0.1.7.
                     initialize_workflow(post_folder)
@@ -284,11 +315,14 @@ class PublishManager:
         try:
             if default_runner:
                 if job.workflow_mode == "all":
+                    runner_kwargs = {"on_browser_started": remember_browser}
+                    if job.skip_targets:
+                        runner_kwargs["skip_targets"] = job.skip_targets
                     runner(
                         job.post,
                         self.project_root,
                         job.controller,
-                        on_browser_started=remember_browser,
+                        **runner_kwargs,
                     )
                 else:
                     runner(
@@ -310,6 +344,8 @@ class PublishManager:
                 # by the all-platform workflow and its tests.
                 runner(job.post, self.project_root, job.controller)
         except BaseException as exc:
+            if job.controller.cancel_requested:
+                return
             try:
                 state = load_publish_state(job.post_folder)
                 if state["workflow"]["status"] not in {"failed", "completed"}:
@@ -326,13 +362,19 @@ class PublishManager:
                 # it through the Web UI on this same worker thread. Playwright
                 # sync objects are intentionally not touched by request threads.
                 self._wait_for_failed_browser_close(job)
-            if job.context is not None:
+            if job.context is not None and not job.controller.cancel_requested:
                 self._close_browser(job)
         finally:
-            with self._lock:
-                if self._active_job is job:
-                    job.browser_open = False
-                    self._active_job = None
+            try:
+                if job.controller.cancel_requested:
+                    # Playwright cleanup must stay on its owning worker thread.
+                    self._close_browser(job)
+                    job.controller.cancelled()
+            finally:
+                with self._lock:
+                    if self._active_job is job:
+                        job.browser_open = False
+                        self._active_job = None
 
     @staticmethod
     def _context_is_open(context: object) -> bool:
@@ -399,6 +441,26 @@ class PublishManager:
             job.close_requested.set()
             return state
 
+    def cancel_requested_for(self, post_id: str) -> bool:
+        with self._lock:
+            job = self._active_job
+            return bool(job and job.post_id == post_id and job.controller.cancel_requested)
+
+    def cancel_publish(self, post_id: str) -> dict:
+        """Request a worker-thread stop even when the persisted status is stale."""
+
+        with self._lock:
+            job = self._active_job
+            if job is None or job.post_id != post_id:
+                raise PublishManagerError("当前任务没有正在运行的发布准备流程。")
+            state = update_workflow(
+                job.post_folder,
+                message="正在取消发布准备，当前浏览器操作结束后关闭浏览器。",
+            )
+            job.controller.request_cancel()
+            job.close_requested.set()
+            return state
+
     def browser_open_for(self, post_id: str) -> bool:
         with self._lock:
             return bool(
@@ -422,6 +484,22 @@ class PublishManager:
         folder = get_post_folder(post_id, self.posts_root)
         with self._lock:
             state = load_publish_state(folder)
+            if (
+                state["workflow"]["status"] == "interrupted"
+                and self._active_job is not None
+                and self._active_job.post_id == post_id
+                and self._active_job.controller.is_waiting_for(
+                    state["workflow"]["current_platform"],
+                    state["workflow"]["current_step"],
+                )
+            ):
+                platform = state["workflow"]["current_platform"]
+                state = update_workflow(
+                    folder,
+                    status="waiting",
+                    message=state["workflow"]["platforms"][platform]["message"],
+                    error=None,
+                )
             if (
                 state["workflow"]["status"] in {"running", "waiting"}
                 and (self._active_job is None or self._active_job.post_id != post_id)

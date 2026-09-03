@@ -257,7 +257,7 @@
 
     const labels = { baijiahao: "百家号", toutiao_article: "今日头条文章", wechat_article: "微信公众号长文", wechat_image: "微信图文", toutiao_micro: "微头条" };
     const statusLabels = { pending: "等待", running: "正在运行", waiting: "等待人工操作", ready: "已准备完成", failed: "失败" };
-    const workflowLabels = { idle: "未启动", running: "正在运行", waiting: "等待人工操作", completed: "已完成", failed: "失败", interrupted: "已中断" };
+    const workflowLabels = { idle: "未启动", running: "正在运行", waiting: "等待人工操作", completed: "已完成", failed: "失败", interrupted: "已中断", cancelled: "已取消" };
     const statusElement = document.getElementById("content-published-status");
     const publishedAt = document.getElementById("published-at");
     const workflowStatus = document.getElementById("workflow-status");
@@ -285,6 +285,13 @@
         }
         if (active) {
             const notice = document.createElement("span"); notice.className = "workflow-action-note"; notice.textContent = "发布流程进行中"; actions.appendChild(notice);
+            if (state.publisher_owns_post === true) {
+                const cancel = createForm(panel.dataset.cancelUrl, state.cancel_requested ? "正在取消…" : "取消发布准备", "取消当前发布准备并关闭共享浏览器？\n\n已在平台发表的内容不会撤回。");
+                const button = cancel.querySelector("button"); button.className = "button button-secondary"; button.disabled = state.cancel_requested === true;
+                actions.appendChild(cancel);
+            }
+        } else if (state.workflow_resumable === true) {
+            actions.appendChild(createForm(panel.dataset.publishUrl, "继续未完成流程"));
         } else if (!state.published && available) {
             const all = createForm(panel.dataset.publishUrl, "发布全部", "开始准备当前任务中已有且已接入的发布平台？\n\nAlarkive 不会点击平台真正的发布按钮。"); all.querySelector("button").className = "button button-secondary"; actions.appendChild(all);
         } else if (!state.published) {
@@ -311,6 +318,7 @@
         if (!workflowContinue) return;
         workflowContinue.replaceChildren();
         const workflow = state.workflow || {};
+        if (state.cancel_requested === true) return;
         if (workflow.status !== "waiting") return;
         if (state.browser_open === false) { const notice = document.createElement("p"); notice.className = "workflow-error"; notice.textContent = "共享浏览器已关闭，本次流程无法继续。请重新点击发布。"; workflowContinue.appendChild(notice); return; }
         const targets = (panel.dataset.fullWorkflowTargets || "").split(",").filter(Boolean);

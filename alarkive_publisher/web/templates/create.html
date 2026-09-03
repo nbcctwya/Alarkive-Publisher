@@ -57,7 +57,7 @@
                     <button class="button button-secondary prompt-button" id="copy-wechat-long-prompt" type="button">复制微信长文 AI Prompt</button>
                 </div>
                 <textarea class="body-input" id="wechat_long_body" name="wechat_long_body" rows="12" placeholder="支持 Markdown 和 [[image:N]] 图片占位符">{{ form.get('wechat_long_body', '') }}</textarea>
-                <p class="muted">支持独立的图片编排；本版本暂未接入发布器。</p>
+                <p class="muted">支持独立的图片编排。</p>
                 <p class="prompt-status" id="wechat-long-prompt-status" aria-live="polite"></p>
                 <textarea class="prompt-fallback" id="wechat-long-prompt-fallback" rows="8" readonly hidden aria-label="微信长文 Prompt 手动复制区域"></textarea>
             </fieldset>
@@ -85,7 +85,7 @@
                     <button class="button button-secondary prompt-button" id="copy-toutiao-short-prompt" type="button">复制微头条 AI Prompt</button>
                 </div>
                 <textarea class="body-input" id="toutiao_short_body" name="toutiao_short_body" rows="12" placeholder="直接、口语化的信息流正文">{{ form.get('toutiao_short_body', '') }}</textarea>
-                <p class="muted">图片按上传顺序作为独立图文组处理；本版本暂未接入发布器。</p>
+                <p class="muted">图片按上传顺序作为独立图文组处理。</p>
                 <p class="prompt-status" id="toutiao-short-prompt-status" aria-live="polite"></p>
                 <textarea class="prompt-fallback" id="toutiao-short-prompt-fallback" rows="8" readonly hidden aria-label="微头条 Prompt 手动复制区域"></textarea>
             </fieldset>

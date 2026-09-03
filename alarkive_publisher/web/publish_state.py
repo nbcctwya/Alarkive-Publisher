@@ -14,7 +14,7 @@ from ..routing import PUBLISH_TARGETS, normalize_target
 
 STATE_SCHEMA_VERSION = "0.1"
 STATE_FILENAME = "publish-state.json"
-WORKFLOW_STATUSES = {"idle", "running", "waiting", "completed", "failed", "interrupted"}
+WORKFLOW_STATUSES = {"idle", "running", "waiting", "completed", "failed", "interrupted", "cancelled"}
 PLATFORM_STATUSES = {"pending", "running", "waiting", "ready", "failed"}
 # Canonical v0.2 platform targets. Keep the exported name for callers that
 # imported it from the v0.1 state module.
@@ -271,6 +271,36 @@ def initialize_workflow(
     return update_publish_state(post_folder, update)
 
 
+def resume_workflow(
+    post_folder: Path | str,
+    ready_targets: tuple[str, ...],
+) -> dict[str, Any]:
+    """Keep completed targets and reset unfinished targets for a new browser run."""
+
+    ready = {normalize_target(target) for target in ready_targets}
+
+    def update(state: dict[str, Any]) -> None:
+        workflow = state["workflow"]
+        workflow.update(
+            status="running",
+            workflow_mode="all",
+            target_platform=None,
+            current_platform=None,
+            current_step="resuming",
+            message="正在从第一个未完成平台继续发布准备流程",
+            error=None,
+            updated_at=_now(),
+        )
+        for target in PUBLISH_TARGETS:
+            if target not in ready:
+                workflow["platforms"][target] = _platform_state()
+        for target in LEGACY_STATE_PLATFORMS:
+            if target in workflow["platforms"] and normalize_target(target) not in ready:
+                workflow["platforms"][target] = _platform_state()
+
+    return update_publish_state(post_folder, update)
+
+
 def update_workflow(
     post_folder: Path | str,
     *,
@@ -348,6 +378,7 @@ __all__ = [
     "initialize_workflow",
     "load_publish_state",
     "mark_interrupted",
+    "resume_workflow",
     "mark_published",
     "mark_unpublished",
     "save_publish_state",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
@@ -41,7 +42,14 @@ WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
 
-app = FastAPI(title="Alarkive Publisher", version=__version__)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Imports by tests/tools must never rewrite the running user's sidecars.
+    publish_manager.reconcile_interrupted_workflows()
+    yield
+
+
+app = FastAPI(title="Alarkive Publisher", version=__version__, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 publish_manager = PublishManager()
@@ -52,6 +60,9 @@ def _load_web_post(post_id: str) -> dict:
     post["publish_state"] = publish_manager.reconcile_post_if_needed(post_id)
     post["browser_open"] = publish_manager.browser_open_for(post_id)
     post["publisher_active"] = publish_manager.has_active_workflow()
+    post["publisher_owns_post"] = publish_manager.active_post_id() == post_id
+    post["cancel_requested"] = publish_manager.cancel_requested_for(post_id)
+    post["workflow_resumable"] = publish_manager.can_resume(post_id)
     return post
 
 
@@ -507,6 +518,15 @@ async def close_publish_browser(request: Request, post_id: str) -> Response:
     return RedirectResponse(url=f"/posts/{post_id}", status_code=303)
 
 
+@app.post("/posts/{post_id}/publish/cancel", name="cancel_publish")
+async def cancel_publish(request: Request, post_id: str) -> Response:
+    try:
+        publish_manager.cancel_publish(post_id)
+    except (PublishManagerError, StorageError, PublishStateError) as exc:
+        return _render_detail_error(request, post_id, str(exc))
+    return RedirectResponse(url=f"/posts/{post_id}", status_code=303)
+
+
 @app.post("/posts/{post_id}/publish/{platform}", name="publish_platform")
 async def publish_platform(request: Request, post_id: str, platform: str) -> Response:
     """Start a single-platform preparation without changing the all route."""
@@ -541,6 +561,9 @@ async def publish_state_api(post_id: str) -> dict:
         # status. It closes the gap between reset-local-marker and the single
         # active-browser guard.
         state["publisher_active"] = publish_manager.has_active_workflow()
+        state["publisher_owns_post"] = publish_manager.active_post_id() == post_id
+        state["cancel_requested"] = publish_manager.cancel_requested_for(post_id)
+        state["workflow_resumable"] = publish_manager.can_resume(post_id)
         return state
     except (StorageError, PublishStateError):
         raise HTTPException(status_code=404, detail="发布状态不存在")
