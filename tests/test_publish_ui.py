@@ -94,11 +94,11 @@ class PublishUiStateTests(unittest.TestCase):
 
         for label in ("公域长文", "微信长文", "微信图文", "微头条"):
             self.assertIn(label, rendered)
-        for label in ("发布百家号", "发布今日头条文章", "发布微信图文", "发布微头条"):
+        for label in ("发布百家号", "发布今日头条文章", "发布微信公众号长文", "发布微信图文", "发布微头条"):
             self.assertIn(label, rendered)
         self.assertIn("今日头条文章", rendered)
         self.assertIn("微信公众号长文", rendered)
-        self.assertIn("待接入", rendered)
+        self.assertNotIn("Publisher 待接入", rendered)
         self.assertNotIn("小红书", rendered)
         self.assertNotIn("xiaohongshu", rendered)
         self.assertNotIn('>发布</button>', rendered)
@@ -117,16 +117,16 @@ class PublishUiStateTests(unittest.TestCase):
         self.assertIn("无内容", rendered)
         self.assertNotIn("发布微信图文</button>", rendered)
 
-    def test_only_unsupported_variants_disable_full_workflow(self) -> None:
+    def test_wechat_long_alone_enables_single_and_full_workflow(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             _, post = self._detail_context(Path(temp), ("wechat_long",))
             rendered = web_app.templates.get_template("detail.html").render(
                 request=_TemplateRequest(), post=post
             )
 
-        self.assertNotIn("发布全部", rendered)
-        self.assertIn("当前任务包含内容，但没有已接入的可发布平台", rendered)
-        self.assertIn("待接入", rendered)
+        self.assertIn("发布全部", rendered)
+        self.assertIn("发布微信公众号长文</button>", rendered)
+        self.assertNotIn("Publisher 待接入", rendered)
         self.assertNotIn("小红书", rendered)
 
     def test_detail_hides_actions_while_publisher_is_active(self) -> None:

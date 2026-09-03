@@ -1,6 +1,6 @@
-# Alarkive Publisher v0.2.3
+# Alarkive Publisher v0.2.4
 
-本版接入微头条，并完成目前四种发布方式的一键发布：百家号、今日头条文章、微信图文、微头条。自动化负责准备内容，最终发布仍由用户手动操作。
+本版接入微信公众号长文，支持五种发布方式：百家号、今日头条文章、微信公众号长文、微信图文、微头条。自动化负责准备内容，最终发布仍由用户手动操作。
 
 Alarkive Publisher 负责把研究内容整理为标准化的 Alarkive Package，并为已经接入的渠道准备发布页面。当前版本的内容模型是：
 
@@ -18,6 +18,7 @@ Publisher
 
 - `baijiahao`：消费 `public_long`（公域长文）
 - `toutiao_article`：消费 `public_long`（公域长文）
+- `wechat_article`：消费 `wechat_long`（微信公众号长文）
 - `wechat_image`：消费 `wechat_short`（微信图文 / 小绿书）
 - `toutiao_micro`：消费 `toutiao_short`（微头条）
 
@@ -29,7 +30,7 @@ v0.2.1 加固了今日头条文章自动化预发布：复用 `public_long` 标�
 
 已知限制：此前实测头条自动草稿请求返回业务错误码 `7050`，页面持续显示“草稿保存中”。v0.2.2 中，标题、正文、图片及发布区域检查通过后，保存状态超过 30 秒仍未结束会显示“尚未确认保存成功”的提示，并进入等待人工检查状态。用户在头条页面处理保存状态后，可点击“继续到下一个发布平台”；单平台则可结束流程。程序不会把提示当作保存成功，也不会尝试点击发布来解决。文字、图片或发布区域检查失败仍会中止流程。详见 [版本说明](CHANGELOG.md)。
 
-内容模型已经预留但尚未接入 Publisher 的目标是微信公众号长文。它可以保存、读取和展示，但不会启动空的浏览器流程。
+微信公众号长文的浏览器逻辑独立位于 `alarkive_publisher/wechat_article.py`，仅读取 `wechat_long` 的标题、完整正文和有序图片。通过公众号“文章”入口打开新编辑器，保留 Markdown 段落、标题和强调；按 `[[image:N]]` 插入对应图片，未引用图片按原顺序追加末尾，无标记则全部追加。发现编辑器恢复了已有内容时停止，避免覆盖。预发布完成后停留在编辑器等待人工检查，不点击发表、发布、群发、提交或保存为草稿；页面自动保存不等于本程序已经确认远程草稿持久保存。
 
 小红书已经从 Web UI、内容表单、详情页和完整 workflow 中移除；底层 `xiaohongshu.py` 与 `run_xiaohongshu()` 保留为 legacy publisher，供旧集成使用。
 
@@ -125,7 +126,7 @@ python -m alarkive_publisher.web.app
 没有对应 Content Variant → 无内容
 ```
 
-一键发布的定义是“当前任务中有内容且 Publisher 已接入的所有平台”。当前顺序为百家号 → 今日头条文章 → 微信图文 → 微头条，共享一个 Chrome 持久化 profile 生命周期，并始终停在最终发布按钮之前，不会自动点击发布、发表或群发。
+一键发布的定义是“当前任务中有内容且 Publisher 已接入的所有平台”。当前顺序为百家号 → 今日头条文章 → 微信公众号长文 → 微信图文 → 微头条，共享一个 Chrome 持久化 profile 生命周期，并始终停在最终发布按钮之前，不会自动点击发布、发表或群发。
 
 详情页的“发布微头条”按钮只启动微头条单平台准备流程。微头条最多上传 18 张图片，单图不超过 20MB；若编辑器恢复了已有文字或图片，程序会停止并保留页面，避免覆盖或混入旧内容。用户清空页面后可重新启动。
 
@@ -138,6 +139,15 @@ python scripts/debug_toutiao_micro.py ".\posts\20260902-233140-40e3"
 ```
 
 此脚本调用现有 `run_single_platform_workflow()`，到达预发布状态后保留 Chrome；输入 `state` 可再次截图，按回车结束并关闭浏览器。诊断保存在忽略版本管理的 `debug/` 中，Package 文件保持不变。
+
+微信公众号长文使用详情页“发布微信公众号长文”按钮。真实 Chrome 单平台复测同样默认选择 `posts/` 中创建时间最新的 Package：
+
+```powershell
+python scripts/debug_wechat_article.py --append-images  # 第一步：完整正文，所有图片追加末尾
+python scripts/debug_wechat_article.py                  # 最终模式：按 [[image:N]] 插图
+```
+
+`--append-images` 仅在内存中移除 marker，不改写 Package。图片逐张上传，等待微信素材 ID、加载状态及图片地址稳定，校验全文、图片数量和图文顺序，再复查编辑器重绘后的结果。截图和诊断写入 `debug/wechat_article-时间戳/`；默认保留 Chrome 供检查，输入 `state` 再次截图，回车关闭；自动回归可加 `--auto-close`。
 
 ## CLI Publisher
 

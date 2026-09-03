@@ -125,13 +125,15 @@ wechat_short → wechat_image
 toutiao_short → toutiao_micro
 ```
 
-v0.2.1 当前已接入的 Publisher 是：
+v0.2.4 当前已接入的 Publisher 是：
 
 - `baijiahao`：消费 `public_long`，可发布准备
 - `toutiao_article`：消费 `public_long`，可发布准备
+- `wechat_article`：消费 `wechat_long`，可发布准备
 - `wechat_image`：消费 `wechat_short`，可发布准备
+- `toutiao_micro`：消费 `toutiao_short`，可发布准备
 
-`wechat_article`、`toutiao_micro` 的内容可以保存和展示，但 Publisher 尚未接入，详情页显示“待接入”，不会启动空 workflow。
+`wechat_article` 根据 `wechat_long` 自己的 `[[image:N]]` marker 放置正文图片，未引用图片按该变体的 `images` 原顺序追加末尾；没有 marker 时全部追加。所有发布器只准备内容并等待人工检查，不执行平台最终发布。
 
 ## 5. Legacy Package v0.1
 

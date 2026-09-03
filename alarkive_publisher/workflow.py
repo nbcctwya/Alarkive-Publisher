@@ -15,6 +15,7 @@ from .routing import (
     normalize_target,
 )
 from .wechat import run_wechat
+from .wechat_article import run_wechat_article
 from .toutiao_article import run_toutiao_article
 from .toutiao_micro import run_toutiao_micro
 from .workflow_controller import WorkflowController
@@ -87,6 +88,9 @@ def run_publisher_workflow(
                 ready_message = "今日头条文章已准备完成"
                 if warning:
                     ready_message += f"。{warning}"
+            elif target == "wechat_article":
+                page = run_wechat_article(page, post, controller)
+                ready_message = "微信公众号长文已准备完成；尚未确认远程草稿保存"
             elif target == "wechat_image":
                 page = run_wechat(page, post, controller)
                 ready_message = "微信图文已准备完成"
@@ -173,6 +177,9 @@ def run_single_platform_workflow(
             ready_message = "今日头条文章已准备完成"
             if warning:
                 ready_message += f"。{warning}"
+        elif target == "wechat_article":
+            page = run_wechat_article(page, post, controller)
+            ready_message = "微信公众号长文已准备完成；尚未确认远程草稿保存"
         elif target == "toutiao_micro":
             run_toutiao_micro(page, post, controller)
             ready_message = "微头条已准备完成"

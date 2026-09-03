@@ -112,17 +112,17 @@ class ContentVariantWorkflowTests(unittest.TestCase):
                     run_publisher_workflow(post_with(variant), Path("."), controller)
                 self.assertEqual(calls, [runner_name])
 
-    def test_unsupported_only_variants_do_not_start_browser(self) -> None:
+    def test_no_content_does_not_start_browser(self) -> None:
         with patch("alarkive_publisher.workflow.start_browser") as start_browser:
             with self.assertRaisesRegex(ValueError, "没有已接入的可发布平台"):
                 run_publisher_workflow(
-                    post_with("wechat_long"),
+                    post_with(),
                     Path("."),
                     RecordingController(),
                 )
         start_browser.assert_not_called()
 
-    def test_mixed_supported_and_unsupported_variants_only_run_supported(self) -> None:
+    def test_mixed_long_variants_run_their_own_publishers(self) -> None:
         controller = RecordingController()
         page = object()
         context = type("Context", (), {"close": lambda self: None})()
@@ -131,7 +131,9 @@ class ContentVariantWorkflowTests(unittest.TestCase):
             "alarkive_publisher.workflow.run_baijiahao"
         ) as baijiahao, patch("alarkive_publisher.workflow.run_toutiao_article") as toutiao, patch(
             "alarkive_publisher.workflow.run_wechat"
-        ) as wechat, patch("alarkive_publisher.workflow.run_toutiao_micro") as micro:
+        ) as wechat, patch("alarkive_publisher.workflow.run_toutiao_micro") as micro, patch(
+            "alarkive_publisher.workflow.run_wechat_article", return_value=page
+        ) as article:
             run_publisher_workflow(
                 post_with("public_long", "wechat_long", "toutiao_short"),
                 Path("."),
@@ -141,6 +143,7 @@ class ContentVariantWorkflowTests(unittest.TestCase):
         toutiao.assert_called_once()
         wechat.assert_not_called()
         micro.assert_called_once()
+        article.assert_called_once()
 
     def test_single_missing_target_fails_before_browser(self) -> None:
         post = post_with("public_long")
