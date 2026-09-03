@@ -32,6 +32,7 @@ from .storage import (
     MAX_IMAGE_SIZE_BYTES,
     MAX_TOTAL_IMAGE_SIZE_BYTES,
     save_post,
+    update_post as update_existing_post,
 )
 
 
@@ -110,13 +111,112 @@ def _render_create(
     error: str | None = None,
     status_code: int = 200,
 ) -> HTMLResponse:
+    return _render_editor(
+        request,
+        form=form,
+        error=error,
+        status_code=status_code,
+    )
+
+
+def _render_editor(
+    request: Request,
+    *,
+    post_id: str | None = None,
+    form: dict[str, str] | None = None,
+    error: str | None = None,
+    existing_images: list[dict[str, str]] | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
     response = templates.TemplateResponse(
         request=request,
         name="create.html",
-        context={"form": form or {}, "error": error},
+        context={
+            "form": form or {},
+            "error": error,
+            "edit_mode": post_id is not None,
+            "post_id": post_id,
+            "existing_images": existing_images or [],
+        },
     )
     response.status_code = status_code
     return response
+
+
+def _form_from_post(post: dict) -> dict[str, str]:
+    form = _form_values(
+        post["name"],
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+    )
+    for variant in post["variant_contents"]:
+        key = variant["key"]
+        form[f"{key}_title"] = variant["title"]
+        form[f"{key}_body"] = variant["body"]
+    return form
+
+
+async def _read_uploaded_images(
+    images: list[UploadFile] | None,
+    *,
+    required: bool,
+) -> list[ImageData] | None:
+    """Read and validate uploaded PNGs; ``None`` means keep current images."""
+
+    uploaded = [image for image in (images or []) if image.filename]
+    if not uploaded:
+        if required:
+            raise StorageError("至少需要上传 1 张 PNG 图片。")
+        return None
+
+    unsupported = [
+        image.filename or "未命名文件"
+        for image in uploaded
+        if Path(image.filename or "").suffix.lower() != ".png"
+    ]
+    valid_uploaded = [
+        image
+        for image in uploaded
+        if Path(image.filename or "").suffix.lower() == ".png"
+    ]
+    if unsupported and not valid_uploaded:
+        names = "、".join(unsupported)
+        suffix = "至少需要上传 1 张 PNG 图片。" if required else "未替换原图片。"
+        raise StorageError(f"已忽略不支持的文件：{names}。{suffix}")
+    if len(valid_uploaded) > MAX_IMAGE_COUNT:
+        raise StorageError(
+            f"图片数量超过限制，单个任务最多上传 {MAX_IMAGE_COUNT} 张图片。"
+        )
+
+    image_data: list[ImageData] = []
+    total_read = 0
+    for image in valid_uploaded:
+        try:
+            remaining_total = MAX_TOTAL_IMAGE_SIZE_BYTES - total_read
+            read_limit = min(MAX_IMAGE_SIZE_BYTES, remaining_total) + 1
+            data = await image.read(read_limit)
+        except Exception as exc:
+            raise StorageError(f"读取图片失败：{image.filename}") from exc
+        filename = image.filename or "image.png"
+        if len(data) > MAX_IMAGE_SIZE_BYTES:
+            raise StorageError(
+                f"图片过大：{filename}。单张图片不能超过 "
+                f"{MAX_IMAGE_SIZE_BYTES // (1024 * 1024)} MB。"
+            )
+        total_read += len(data)
+        if total_read > MAX_TOTAL_IMAGE_SIZE_BYTES:
+            raise StorageError(
+                "图片总大小超过限制：单个任务的图片总大小不能超过 "
+                f"{MAX_TOTAL_IMAGE_SIZE_BYTES // (1024 * 1024)} MB。"
+            )
+        image_data.append(ImageData(filename=filename, data=data))
+    return image_data
 
 
 @app.get("/", name="home")
@@ -147,6 +247,25 @@ async def new_post(request: Request) -> HTMLResponse:
     return _render_create(request)
 
 
+@app.get("/posts/{post_id}/edit", response_class=HTMLResponse, name="edit_post")
+async def edit_post(request: Request, post_id: str) -> HTMLResponse:
+    try:
+        post = get_post_detail(post_id)
+    except (StorageError, PublishStateError):
+        return templates.TemplateResponse(
+            request=request,
+            name="not_found.html",
+            context={"message": "任务不存在，或任务文件已损坏。"},
+            status_code=404,
+        )
+    return _render_editor(
+        request,
+        post_id=post_id,
+        form=_form_from_post(post),
+        existing_images=post["images"],
+    )
+
+
 @app.post("/posts", name="create_post")
 async def create_post(
     request: Request,
@@ -172,55 +291,11 @@ async def create_post(
         toutiao_short_title,
         toutiao_short_body,
     )
-    uploaded = [image for image in (images or []) if image.filename]
     try:
         if not name.strip():
             raise StorageError("任务名称不能为空。")
-        if not uploaded:
-            raise StorageError("至少需要上传 1 张 PNG 图片。")
-
-        unsupported = [
-            image.filename or "未命名文件"
-            for image in uploaded
-            if Path(image.filename or "").suffix.lower() != ".png"
-        ]
-        valid_uploaded = [
-            image
-            for image in uploaded
-            if Path(image.filename or "").suffix.lower() == ".png"
-        ]
-        if unsupported and not valid_uploaded:
-            names = "、".join(unsupported)
-            raise StorageError(
-                f"已忽略不支持的文件：{names}。至少需要上传 1 张 PNG 图片。"
-            )
-        if len(valid_uploaded) > MAX_IMAGE_COUNT:
-            raise StorageError(
-                f"图片数量超过限制，单个任务最多上传 {MAX_IMAGE_COUNT} 张图片。"
-            )
-
-        image_data: list[ImageData] = []
-        total_read = 0
-        for image in valid_uploaded:
-            try:
-                remaining_total = MAX_TOTAL_IMAGE_SIZE_BYTES - total_read
-                read_limit = min(MAX_IMAGE_SIZE_BYTES, remaining_total) + 1
-                data = await image.read(read_limit)
-            except Exception as exc:
-                raise StorageError(f"读取图片失败：{image.filename}") from exc
-            filename = image.filename or "image.png"
-            if len(data) > MAX_IMAGE_SIZE_BYTES:
-                raise StorageError(
-                    f"图片过大：{filename}。单张图片不能超过 "
-                    f"{MAX_IMAGE_SIZE_BYTES // (1024 * 1024)} MB。"
-                )
-            total_read += len(data)
-            if total_read > MAX_TOTAL_IMAGE_SIZE_BYTES:
-                raise StorageError(
-                    "图片总大小超过限制：单个任务的图片总大小不能超过 "
-                    f"{MAX_TOTAL_IMAGE_SIZE_BYTES // (1024 * 1024)} MB。"
-                )
-            image_data.append(ImageData(filename=filename, data=data))
+        image_data = await _read_uploaded_images(images, required=True)
+        assert image_data is not None
 
         saved = save_post(
             name=name,
@@ -246,6 +321,100 @@ async def create_post(
             request,
             form=form,
             error="保存图文失败，请检查终端日志后重试。",
+            status_code=500,
+        )
+    finally:
+        for image in images or []:
+            await image.close()
+
+    return RedirectResponse(url=f"/posts/{saved.id}", status_code=303)
+
+
+@app.post("/posts/{post_id}/edit", name="update_post")
+async def update_post(
+    request: Request,
+    post_id: str,
+    name: str = Form(default=""),
+    public_long_title: str = Form(default=""),
+    public_long_body: str = Form(default=""),
+    wechat_long_title: str = Form(default=""),
+    wechat_long_body: str = Form(default=""),
+    wechat_short_title: str = Form(default=""),
+    wechat_short_body: str = Form(default=""),
+    toutiao_short_title: str = Form(default=""),
+    toutiao_short_body: str = Form(default=""),
+    images: list[UploadFile] | None = File(default=None),
+) -> Response:
+    form = _form_values(
+        name,
+        public_long_title,
+        public_long_body,
+        wechat_long_title,
+        wechat_long_body,
+        wechat_short_title,
+        wechat_short_body,
+        toutiao_short_title,
+        toutiao_short_body,
+    )
+    try:
+        # A publish workflow for another package does not touch this package.
+        # Keep the safety guard for editing the package that is currently
+        # being published, but do not unnecessarily block unrelated edits.
+        if publish_manager.active_post_id() == post_id:
+            raise StorageError("发布流程进行中，请先完成或关闭后再编辑。")
+        image_data = await _read_uploaded_images(images, required=False)
+        saved = update_existing_post(
+            post_id,
+            titles={
+                "public_long": public_long_title,
+                "wechat_long": wechat_long_title,
+                "wechat_short": wechat_short_title,
+                "toutiao_short": toutiao_short_title,
+            },
+            bodies={
+                "public_long": public_long_body,
+                "wechat_long": wechat_long_body,
+                "wechat_short": wechat_short_body,
+                "toutiao_short": toutiao_short_body,
+            },
+            images=image_data,
+        )
+    except StorageError as exc:
+        LOGGER.warning("编辑图文请求失败（%s）：%s", post_id, exc)
+        try:
+            post = get_post_detail(post_id)
+        except (StorageError, PublishStateError):
+            return templates.TemplateResponse(
+                request=request,
+                name="not_found.html",
+                context={"message": "任务不存在，或任务文件已损坏。"},
+                status_code=404,
+            )
+        return _render_editor(
+            request,
+            post_id=post_id,
+            form=form,
+            error=str(exc),
+            existing_images=post["images"],
+            status_code=400,
+        )
+    except Exception:
+        LOGGER.exception("编辑图文任务失败：%s", post_id)
+        try:
+            post = get_post_detail(post_id)
+        except (StorageError, PublishStateError):
+            return templates.TemplateResponse(
+                request=request,
+                name="not_found.html",
+                context={"message": "任务不存在，或任务文件已损坏。"},
+                status_code=404,
+            )
+        return _render_editor(
+            request,
+            post_id=post_id,
+            form=form,
+            error="保存图文失败，请检查终端日志后重试。",
+            existing_images=post["images"],
             status_code=500,
         )
     finally:

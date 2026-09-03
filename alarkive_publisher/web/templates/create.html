@@ -1,24 +1,25 @@
 {% extends "base.html" %}
-{% block title %}上传图文 · Alarkive Publisher{% endblock %}
+{% block title %}{{ '编辑图文' if edit_mode else '上传图文' }} · Alarkive Publisher{% endblock %}
 {% block content %}
 <div class="page-heading compact-heading">
     <div>
-        <p class="eyebrow">NEW PACKAGE v0.2</p>
-        <h1>上传图文</h1>
-        <p class="muted">按需准备内容模块，自动生成 Content Variant Package。</p>
+        <p class="eyebrow">{{ 'EDIT PACKAGE v0.2' if edit_mode else 'NEW PACKAGE v0.2' }}</p>
+        <h1>{{ '编辑图文' if edit_mode else '上传图文' }}</h1>
+        <p class="muted">{{ '补充或修改已有 Content Variant，保存后仍使用原任务 ID。' if edit_mode else '按需准备内容模块，自动生成 Content Variant Package。' }}</p>
     </div>
 </div>
 
 {% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
 
-<form class="content-form" method="post" action="{{ url_for('create_post') }}" enctype="multipart/form-data" id="post-form">
+<form class="content-form" method="post" action="{{ url_for('update_post', post_id=post_id) if edit_mode else url_for('create_post') }}" enctype="multipart/form-data" id="post-form" data-preserve-images="{{ 'true' if edit_mode else 'false' }}" data-existing-image-count="{{ existing_images | length }}">
     <section class="form-section">
         <div class="section-heading">
             <div><p class="eyebrow">BASIC</p><h2>任务信息</h2></div>
             <span class="required-note">* 必填</span>
         </div>
         <label class="field-label" for="name">任务名称 <span>*</span></label>
-        <input class="text-input" id="name" name="name" type="text" value="{{ form.get('name', '') }}" placeholder="例如：Roman 太空望远镜" required>
+        <input class="text-input" id="name" name="name" type="text" value="{{ form.get('name', '') }}" placeholder="例如：Roman 太空望远镜" {% if edit_mode %}readonly{% else %}required{% endif %}>
+        {% if edit_mode %}<p class="muted form-help">任务名称、创建时间和任务 ID 在编辑时保持不变。</p>{% endif %}
     </section>
 
     <section class="form-section">
@@ -92,18 +93,28 @@
             <span class="muted">仅支持 PNG，1–20 张；单张 ≤ 20 MB，合计 ≤ 100 MB</span>
         </div>
         <div class="upload-zone" id="upload-zone" tabindex="0" role="button" aria-controls="images">
-            <div class="upload-icon">↑</div><h3>选择 PNG 图片</h3>
-            <p>也可以将图片拖到此处，拖动缩略图调整顺序</p>
+            <div class="upload-icon">↑</div><h3>{{ '替换全部图片（可选）' if edit_mode else '选择 PNG 图片' }}</h3>
+            <p>{{ '不选择新图片则沿用原 Package 图片；也可以将新图片拖到此处。' if edit_mode else '也可以将图片拖到此处，拖动缩略图调整顺序' }}</p>
             <label class="button button-secondary upload-button" for="images">选择图片</label>
             <input id="images" name="images" type="file" accept=".png,image/png" multiple hidden>
         </div>
         <p class="upload-error" id="upload-error" role="alert" hidden></p>
+        {% if edit_mode and existing_images %}
+        <div class="existing-images">
+            <p class="muted">当前图片（保存时会继续保留）</p>
+            <div class="preview-grid existing-preview-grid">
+                {% for image in existing_images %}
+                <figure class="preview-card existing-preview-card"><img src="{{ url_for('image_file', post_id=post_id, image_name=image.filename) }}" alt="{{ image.filename }}"><span class="preview-number">{{ '%02d' | format(loop.index) }}</span><figcaption class="preview-name">{{ image.filename }}</figcaption></figure>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
         <div class="preview-grid" id="preview-grid" aria-live="polite"></div>
     </section>
 
     <div class="form-actions">
         <a class="button button-secondary" href="{{ url_for('post_list') }}">取消</a>
-        <button class="button button-primary" type="submit">保存图文</button>
+        <button class="button button-primary" type="submit">{{ '保存修改' if edit_mode else '保存图文' }}</button>
     </div>
 </form>
 <script src="{{ url_for('static', path='app.js') }}"></script>

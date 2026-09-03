@@ -1,8 +1,8 @@
-# Alarkive Publisher v0.2.2
+# Alarkive Publisher v0.2.3
 
 本版接入微头条，并完成目前四种发布方式的一键发布：百家号、今日头条文章、微信图文、微头条。自动化负责准备内容，最终发布仍由用户手动操作。
 
-Alarkive Publisher 负责把研究内容整理为不可变的 Alarkive Package，并为已经接入的渠道准备发布页面。当前版本的内容模型是：
+Alarkive Publisher 负责把研究内容整理为标准化的 Alarkive Package，并为已经接入的渠道准备发布页面。当前版本的内容模型是：
 
 ```text
 Research / Content
@@ -20,6 +20,8 @@ Publisher
 - `toutiao_article`：消费 `public_long`（公域长文）
 - `wechat_image`：消费 `wechat_short`（微信图文 / 小绿书）
 - `toutiao_micro`：消费 `toutiao_short`（微头条）
+
+v0.2.3 新增已有 Package 的文章编辑：四种 Content Variant 自动回填，v0.2 原地更新，v0.1 在保存时原地升级为 v0.2；任务 ID、名称、创建时间和发布状态保持不变，未选择替换时沿用原图片。旧小红书正文文件保留但不重新纳入 v0.2 内容模块。
 
 v0.2.2 新增微头条自动化预发布，浏览器逻辑独立放在 `alarkive_publisher/toutiao_micro.py`。只读取微头条自己的标题、正文和有序图片列表；当前微头条页面没有独立标题栏，因此将标题作为文字首段，与正文用空行分隔。正文转为可读文字并保留换行、空段，图片按 Package 顺序上传到独立图片区，不使用 `[[image:N]]`，也不向正文插图。完成文字、图片及重绘后的校验后，停在人工检查步骤，不点击“发布”或“存草稿”，不宣称远程草稿已经保存。
 

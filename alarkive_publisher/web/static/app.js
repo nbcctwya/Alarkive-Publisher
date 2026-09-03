@@ -13,6 +13,8 @@
     let selectedFiles = [];
     let draggedIndex = null;
     const maxImageCount = 20;
+    const preserveExistingImages = form.dataset.preserveImages === "true";
+    const existingImageCount = Number(form.dataset.existingImageCount || 0);
 
     function markerIndexes(text) {
         const indexes = [];
@@ -27,7 +29,7 @@
 
     function renderMarkerStatus() {
         if (!markerStatus || !publicLongBody) return;
-        const count = selectedFiles.length;
+        const count = selectedFiles.length || (preserveExistingImages ? existingImageCount : 0);
         if (!count) {
             markerStatus.textContent = "请先添加图片，再校验图片占位符。";
             markerStatus.className = "marker-status warning";
@@ -54,7 +56,7 @@
     }
 
     function promptWithImages(intro, style, destination, marker) {
-        const count = selectedFiles.length;
+        const count = selectedFiles.length || (preserveExistingImages ? existingImageCount : 0);
         const mapping = Array.from({length: count}, (_, index) => "第 " + (index + 1) + " 张图片 → [[image:" + (index + 1) + "]]" ).join("\n");
         const markers = Array.from({length: count}, (_, index) => "[[image:" + (index + 1) + "]]" ).join("\n");
         return [
@@ -152,7 +154,7 @@
         const status = document.getElementById(statusId);
         const fallback = document.getElementById(fallbackId);
         button.addEventListener("click", async () => {
-            if (requiresImages && !selectedFiles.length) {
+            if (requiresImages && !selectedFiles.length && !existingImageCount) {
                 showPromptStatus(status, "请先添加图片，再生成兼容 Alarkive 的 Prompt。", true);
                 renderMarkerStatus(); return;
             }
@@ -216,7 +218,12 @@
     bindPrompt("copy-wechat-short-prompt", "wechat-short-prompt-status", "wechat-short-prompt-fallback", buildWechatShortPrompt, "✓ 微信图文 Prompt 已复制", false);
     bindPrompt("copy-toutiao-short-prompt", "toutiao-short-prompt-status", "toutiao-short-prompt-fallback", buildToutiaoShortPrompt, "✓ 微头条 Prompt 已复制", false);
 
-    form.addEventListener("submit", (event) => { if (!selectedFiles.length) { event.preventDefault(); showError("至少需要上传 1 张 PNG 图片。"); zone.focus(); return; } syncInput(); });
+    form.addEventListener("submit", (event) => {
+        if (!selectedFiles.length && (!preserveExistingImages || !existingImageCount)) {
+            event.preventDefault(); showError("至少需要上传 1 张 PNG 图片。"); zone.focus(); return;
+        }
+        syncInput();
+    });
     render();
 })();
 

@@ -124,6 +124,7 @@ h4 { margin-bottom: 12px; font-size: 16px; font-weight: 600; }
 .image-count { color: var(--accent); font-size: 12px; font-weight: 600; }
 .created-at { margin-bottom: 14px; color: var(--muted); font-size: 13px; }
 .platforms { min-height: 28px; margin-bottom: 20px; color: #475569; font-size: 13px; }
+.card-actions { display: flex; gap: 8px; }
 .status-badge { display: inline-flex; align-items: center; width: max-content; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .status-published { color: #166534; background: #dcfce7; }
 .status-unpublished { color: #475569; background: #e2e8f0; }
@@ -151,6 +152,7 @@ h4 { margin-bottom: 12px; font-size: 16px; font-weight: 600; }
 .section-heading { align-items: flex-end; margin-bottom: 22px; }
 .section-heading .eyebrow { margin-bottom: 4px; }
 .required-note { color: var(--muted); font-size: 12px; }
+.form-help { margin: -8px 0 0; font-size: 12px; }
 .field-label { display: block; margin: 0 0 7px; font-size: 14px; font-weight: 600; }
 .field-label span, legend { color: var(--accent); }
 .field-label-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -204,6 +206,9 @@ h4 { margin-bottom: 12px; font-size: 16px; font-weight: 600; }
 .preview-card { position: relative; cursor: grab; }
 .preview-card.dragging { opacity: .45; }
 .preview-card img, .detail-image-card img { display: block; width: 100%; aspect-ratio: 1 / 1; object-fit: contain; background: #e2e8f0; }
+.existing-images { margin-top: 18px; }
+.existing-images > p { margin-bottom: 0; font-size: 13px; }
+.existing-preview-card { cursor: default; }
 .preview-number { position: absolute; top: 8px; left: 8px; min-width: 27px; padding: 1px 6px; border-radius: 99px; color: #fff; background: rgba(15, 23, 42, .78); font-size: 12px; font-weight: 700; text-align: center; }
 .preview-name, .detail-image-card figcaption { display: block; overflow: hidden; padding: 8px 9px; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .preview-controls { display: flex; gap: 5px; padding: 0 8px 8px; }

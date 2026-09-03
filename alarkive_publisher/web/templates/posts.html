@@ -28,7 +28,10 @@
         </div>
         <p class="created-at">{{ post.created_display }}</p>
         <p class="platforms">{{ post.platforms | join(' · ') }}</p>
-        <a class="button button-secondary" href="{{ url_for('post_detail', post_id=post.id) }}">查看</a>
+        <div class="card-actions">
+            <a class="button button-secondary" href="{{ url_for('post_detail', post_id=post.id) }}">查看</a>
+            <a class="button button-secondary" href="{{ url_for('edit_post', post_id=post.id) }}">编辑</a>
+        </div>
     </article>
     {% endfor %}
 </section>

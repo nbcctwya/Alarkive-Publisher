@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import secrets
 import shutil
@@ -414,6 +415,454 @@ def save_post(
     )
 
 
+def _variant_entries(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return the content entries using the current variant names."""
+
+    if manifest["schema_version"] == "0.2":
+        return {
+            key: value
+            for key, value in manifest["content"].items()
+            if isinstance(value, dict)
+        }
+    return {
+        variant: manifest["platforms"][platform]
+        for platform, variant in LEGACY_PLATFORM_VARIANT_MAP.items()
+        if variant is not None and platform in manifest["platforms"]
+    }
+
+
+def _content_paths(entries: Mapping[str, Any]) -> set[str]:
+    return {
+        value["content_file"]
+        for value in entries.values()
+        if isinstance(value, dict) and isinstance(value.get("content_file"), str)
+    }
+
+
+def _replace_directory_atomically(
+    directory: Path,
+    staged_directory: Path,
+    *,
+    post_id: str,
+) -> None:
+    """Swap a fully validated package directory into place.
+
+    Renaming the directory as the final operation means readers see either the
+    old package or the complete new package, never a new manifest paired with
+    old Markdown files (or the reverse). The old directory is retained only
+    until the swap succeeds so the original package can be restored if the
+    second rename fails.
+    """
+
+    root = directory.parent
+    backup_directory: Path | None = None
+    for _ in range(10):
+        candidate = root / f".{post_id}-edit-backup-{secrets.token_hex(4)}"
+        if not candidate.exists():
+            backup_directory = candidate
+            break
+    if backup_directory is None:
+        raise StorageError("编辑图文失败：无法创建临时备份目录。")
+
+    keep_backup = False
+    try:
+        directory.rename(backup_directory)
+        try:
+            staged_directory.rename(directory)
+        except OSError:
+            # Best-effort rollback keeps the original package available if the
+            # final rename is rejected by the operating system.
+            try:
+                backup_directory.rename(directory)
+            except OSError as rollback_error:
+                keep_backup = True
+                raise StorageError(
+                    "编辑图文失败，且无法恢复原任务目录，请检查任务目录。"
+                ) from rollback_error
+            raise
+    except OSError as exc:
+        raise StorageError(f"编辑图文失败：{exc}") from exc
+    finally:
+        if not keep_backup and backup_directory is not None and backup_directory.exists():
+            try:
+                shutil.rmtree(backup_directory)
+            except OSError:
+                LOGGER.warning("无法清理编辑备份目录：%s", backup_directory, exc_info=True)
+
+
+def _is_windows_access_denied(error: StorageError) -> bool:
+    cause = error.__cause__
+    return os.name == "nt" and isinstance(cause, OSError) and (
+        getattr(cause, "winerror", None) == 5 or getattr(cause, "errno", None) == 13
+    )
+
+
+def _fallback_image_references(
+    old_entries: Mapping[str, Any],
+    image_count: int,
+) -> list[str]:
+    """Allocate numeric image names not used by the old manifest."""
+
+    used_names = {
+        Path(reference).name
+        for entry in old_entries.values()
+        if isinstance(entry, dict)
+        for reference in entry.get("images", [])
+        if isinstance(reference, str)
+    }
+    numeric_names = [
+        int(Path(name).stem)
+        for name in used_names
+        if Path(name).stem.isdigit()
+    ]
+    next_index = max(numeric_names, default=0) + 1
+    references: list[str] = []
+    while len(references) < image_count:
+        name = f"{next_index:02d}.png"
+        next_index += 1
+        if name in used_names:
+            continue
+        used_names.add(name)
+        references.append(f"images/{name}")
+    return references
+
+
+def _fallback_update_in_place(
+    directory: Path,
+    staged_directory: Path,
+    *,
+    post_id: str,
+    manifest: dict[str, Any],
+    old_entries: Mapping[str, Any],
+    new_content: Mapping[str, Any],
+    normalised_images: Sequence[ImageData] | None,
+) -> dict[str, Any]:
+    """Commit an edit without renaming the existing package directory.
+
+    Body files whose old paths are still referenced are written to a fresh
+    path first. The old manifest therefore remains valid while all new files
+    are prepared; replacing manifest.json is the commit point. This path is a
+    Windows-only recovery for directory-lock failures.
+    """
+
+    transaction = secrets.token_hex(4)
+    old_content_paths = _content_paths(old_entries)
+    old_image_paths = {
+        reference
+        for entry in old_entries.values()
+        if isinstance(entry, dict)
+        for reference in entry.get("images", [])
+        if isinstance(reference, str)
+    }
+    legacy_xiaohongshu_content_paths = {
+        value["content_file"]
+        for key, value in old_entries.items()
+        if manifest["schema_version"] == "0.1"
+        and key == "xiaohongshu"
+        and isinstance(value, dict)
+        and isinstance(value.get("content_file"), str)
+    }
+    legacy_xiaohongshu_image_paths = {
+        reference
+        for key, value in old_entries.items()
+        if manifest["schema_version"] == "0.1"
+        and key == "xiaohongshu"
+        and isinstance(value, dict)
+        for reference in value.get("images", [])
+        if isinstance(reference, str)
+    }
+
+    fallback_image_paths = (
+        _fallback_image_references(old_entries, len(normalised_images))
+        if normalised_images is not None
+        else None
+    )
+    fallback_content: dict[str, Any] = {}
+    body_sources: dict[str, Path] = {}
+    for key, data in new_content.items():
+        content_file = data["content_file"]
+        if content_file in old_content_paths:
+            content_file = f"content/.edit-{transaction}/{key}.md"
+        image_paths = fallback_image_paths or list(data["images"])
+        fallback_content[key] = {
+            "title": data["title"],
+            "content_file": content_file,
+            "images": image_paths,
+        }
+        body_sources[content_file] = staged_directory / data["content_file"]
+
+    fallback_manifest: dict[str, Any] = {
+        "schema_version": "0.2",
+        "id": manifest["id"],
+        "name": manifest["name"],
+        "created_at": manifest["created_at"],
+        "content": fallback_content,
+    }
+    _validate_manifest(fallback_manifest, expected_id=post_id)
+
+    created_files: list[Path] = []
+    temporary_manifest: Path | None = None
+    try:
+        for content_file, source in body_sources.items():
+            target = directory / _safe_manifest_path(content_file)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+            created_files.append(target)
+
+        if normalised_images is not None and fallback_image_paths is not None:
+            for image, reference in zip(normalised_images, fallback_image_paths):
+                target = directory / _safe_manifest_path(reference)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(image.data)
+                created_files.append(target)
+
+        # Validate the exact fallback paths before exposing the new manifest.
+        for content_file, source in body_sources.items():
+            staged_target = staged_directory / _safe_manifest_path(content_file)
+            staged_target.parent.mkdir(parents=True, exist_ok=True)
+            if source.resolve() != staged_target.resolve():
+                shutil.copyfile(source, staged_target)
+        if normalised_images is not None and fallback_image_paths is not None:
+            for image, reference in zip(normalised_images, fallback_image_paths):
+                staged_target = staged_directory / _safe_manifest_path(reference)
+                staged_target.parent.mkdir(parents=True, exist_ok=True)
+                staged_target.write_bytes(image.data)
+        _write_utf8(
+            staged_directory / "manifest.json",
+            json.dumps(fallback_manifest, ensure_ascii=False, indent=2) + "\n",
+        )
+        load_post(staged_directory)
+
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".manifest-edit-", suffix=".tmp", dir=str(directory)
+        )
+        os.close(descriptor)
+        temporary_manifest = Path(temporary_name)
+        _write_utf8(
+            temporary_manifest,
+            json.dumps(fallback_manifest, ensure_ascii=False, indent=2) + "\n",
+        )
+        os.replace(temporary_manifest, directory / "manifest.json")
+        temporary_manifest = None
+
+        new_content_paths = _content_paths(fallback_content)
+        for relative_path in old_content_paths - new_content_paths - legacy_xiaohongshu_content_paths:
+            old_path = directory / _safe_manifest_path(relative_path)
+            if old_path.is_file():
+                old_path.unlink()
+        if normalised_images is not None:
+            new_image_paths = set(fallback_image_paths or [])
+            for relative_path in old_image_paths - new_image_paths - legacy_xiaohongshu_image_paths:
+                old_path = directory / _safe_manifest_path(relative_path)
+                if old_path.is_file():
+                    old_path.unlink()
+        return fallback_manifest
+    except ContentError as exc:
+        raise StorageError(str(exc)) from exc
+    except OSError as exc:
+        raise StorageError(f"编辑图文失败：{exc}") from exc
+    finally:
+        if temporary_manifest is not None and temporary_manifest.exists():
+            try:
+                temporary_manifest.unlink()
+            except OSError:
+                pass
+        # Before manifest.json is committed, newly created files are not
+        # referenced by the original package. Remove them on failure where
+        # possible; leaving an orphaned temp file is still harmless to loading.
+        if temporary_manifest is not None:
+            for created_file in created_files:
+                try:
+                    if created_file.is_file():
+                        created_file.unlink()
+                except OSError:
+                    pass
+
+
+def update_post(
+    post_id: str,
+    titles: Mapping[str, str] | None = None,
+    bodies: Mapping[str, str] | None = None,
+    images: Sequence[ImageData | tuple[str, bytes] | PathLike[str] | str] | None = None,
+    *,
+    posts_root: Path | str | None = None,
+    public_long_title: str = "",
+    public_long_body: str = "",
+    wechat_long_title: str = "",
+    wechat_long_body: str = "",
+    wechat_short_title: str = "",
+    wechat_short_body: str = "",
+    toutiao_short_title: str = "",
+    toutiao_short_body: str = "",
+) -> SavedPost:
+    """Update an existing package in place and always write it as v0.2.
+
+    ``images=None`` keeps the package's existing images. Supplying images
+    replaces the complete image set. Package identity, name, creation time and
+    the publish-state sidecar are copied unchanged from the original folder.
+    """
+
+    directory = _validated_task_directory(post_id, posts_root)
+    manifest = _read_manifest(directory)
+    try:
+        # Besides reading the old metadata, this verifies that every old body
+        # and image referenced by the package is available before staging an
+        # edit. No partially readable package may be upgraded.
+        load_post(directory)
+    except ContentError as exc:
+        raise StorageError(str(exc)) from exc
+
+    explicit_titles = {
+        "public_long": public_long_title,
+        "wechat_long": wechat_long_title,
+        "wechat_short": wechat_short_title,
+        "toutiao_short": toutiao_short_title,
+    }
+    explicit_bodies = {
+        "public_long": public_long_body,
+        "wechat_long": wechat_long_body,
+        "wechat_short": wechat_short_body,
+        "toutiao_short": toutiao_short_body,
+    }
+    if titles is None:
+        titles = explicit_titles
+    elif any(value for value in explicit_titles.values()):
+        titles = {**titles, **explicit_titles}
+    if bodies is None:
+        bodies = explicit_bodies
+    elif any(value for value in explicit_bodies.values()):
+        bodies = {**bodies, **explicit_bodies}
+
+    _, clean_titles, active_keys = _validate_required_fields(
+        manifest["name"], titles, bodies
+    )
+    # Editing does not rename a package. Keep the original value byte-for-
+    # byte, including any accepted surrounding whitespace.
+    clean_name = manifest["name"]
+
+    normalised_images: list[ImageData] | None = None
+    if images is not None:
+        normalised_images = [_normalise_image(image) for image in images]
+        _validate_images(normalised_images)
+
+    old_entries = _manifest_entries(manifest)
+    variant_entries = _variant_entries(manifest)
+    default_entry = next(iter(variant_entries.values()), next(iter(old_entries.values())))
+    default_image_references = default_entry["images"]
+    if normalised_images is not None:
+        new_image_references = [
+            f"images/{index:02d}.png"
+            for index in range(1, len(normalised_images) + 1)
+        ]
+    else:
+        new_image_references = None
+
+    root = directory.parent
+    staged_parent = Path(tempfile.mkdtemp(prefix=f".{post_id}-edit-", dir=str(root)))
+    # Keep the staged package hidden from the package-list scan while retaining
+    # the real package ID as its final directory name. This lets load_post()
+    # perform its normal ID/path validation before the swap.
+    staged_directory = staged_parent / post_id
+    staged_directory.mkdir()
+    try:
+        shutil.copytree(directory, staged_directory, dirs_exist_ok=True)
+        staged_content_directory = staged_directory / "content"
+        staged_content_directory.mkdir(parents=True, exist_ok=True)
+
+        if normalised_images is not None:
+            staged_images_directory = staged_directory / "images"
+            if staged_images_directory.exists():
+                shutil.rmtree(staged_images_directory)
+            staged_images_directory.mkdir()
+            for index, image in enumerate(normalised_images, start=1):
+                (staged_images_directory / f"{index:02d}.png").write_bytes(image.data)
+
+        new_content: dict[str, Any] = {}
+        for key in active_keys:
+            old_entry = variant_entries.get(key)
+            image_references = (
+                new_image_references
+                or (old_entry["images"] if old_entry is not None else default_image_references)
+            )
+            new_content[key] = {
+                "title": clean_titles[key],
+                "content_file": f"content/{key}.md",
+                "images": list(image_references),
+            }
+            _write_utf8(
+                staged_content_directory / f"{key}.md",
+                bodies[key],
+            )
+
+        # Remove body files that belonged to old managed entries when they are
+        # no longer referenced. In particular, v0.1 baijiahao/wechat files are
+        # replaced by the canonical v0.2 names. The legacy Xiaohongshu body is
+        # deliberately retained as an unreferenced file.
+        old_content_paths = _content_paths(old_entries)
+        legacy_xiaohongshu_paths = {
+            value["content_file"]
+            for key, value in old_entries.items()
+            if manifest["schema_version"] == "0.1"
+            and key == "xiaohongshu"
+            and isinstance(value, dict)
+            and isinstance(value.get("content_file"), str)
+        }
+        new_content_paths = _content_paths(new_content)
+        for relative_path in old_content_paths - new_content_paths - legacy_xiaohongshu_paths:
+            old_path = staged_directory / _safe_manifest_path(relative_path)
+            if old_path.is_file():
+                old_path.unlink()
+
+        new_manifest: dict[str, Any] = {
+            "schema_version": "0.2",
+            "id": manifest["id"],
+            "name": clean_name,
+            "created_at": manifest["created_at"],
+            "content": new_content,
+        }
+        _validate_manifest(new_manifest, expected_id=post_id)
+        _write_utf8(
+            staged_directory / "manifest.json",
+            json.dumps(new_manifest, ensure_ascii=False, indent=2) + "\n",
+        )
+        # Validate the staged directory after both Markdown and manifest have
+        # been written. This also checks image existence and long-body markers.
+        load_post(staged_directory)
+        committed_manifest = new_manifest
+        try:
+            _replace_directory_atomically(directory, staged_directory, post_id=post_id)
+        except StorageError as swap_error:
+            if not directory.is_dir() or not _is_windows_access_denied(swap_error):
+                raise
+            LOGGER.warning(
+                "Package 目录重命名被 Windows 拒绝，改用文件级编辑提交：%s",
+                directory,
+            )
+            committed_manifest = _fallback_update_in_place(
+                directory,
+                staged_directory,
+                post_id=post_id,
+                manifest=manifest,
+                old_entries=old_entries,
+                new_content=new_content,
+                normalised_images=normalised_images,
+            )
+        return SavedPost(
+            id=post_id,
+            name=clean_name,
+            created_at=manifest["created_at"],
+            directory=directory,
+            manifest=committed_manifest,
+        )
+    except ContentError as exc:
+        raise StorageError(str(exc)) from exc
+    except OSError as exc:
+        raise StorageError(f"编辑图文失败：{exc}") from exc
+    finally:
+        if staged_parent.exists():
+            shutil.rmtree(staged_parent, ignore_errors=True)
+
+
 def _read_manifest(directory: Path) -> dict[str, Any]:
     manifest_path = directory / "manifest.json"
     try:
@@ -676,4 +1125,5 @@ __all__ = [
     "get_post_folder",
     "list_post_summaries",
     "save_post",
+    "update_post",
 ]

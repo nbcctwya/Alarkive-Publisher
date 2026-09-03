@@ -7,6 +7,7 @@
         <h1>{{ post.name }}</h1>
         <p class="detail-meta">创建于 {{ post.created_display }} · 任务 ID <code>{{ post.id }}</code></p>
     </div>
+    {% if not post.publisher_active %}<a class="button button-secondary" href="{{ url_for('edit_post', post_id=post.id) }}">编辑文章</a>{% endif %}
 </div>
 
 {% if post.action_error %}<div class="alert alert-error" role="alert">{{ post.action_error }}</div>{% endif %}
@@ -72,7 +73,7 @@
             {% endif %}
         </div>
     </div>
-    <p class="publisher-note">Alarkive v0.2.2 只准备当前任务中存在且已接入 Publisher 的内容，不会点击平台最终的“发布/发表/群发”按钮。未接入的平台显示“待接入”，没有对应 Content Variant 的平台显示“无内容”。</p>
+    <p class="publisher-note">Alarkive v0.2.3 只准备当前任务中存在且已接入 Publisher 的内容，不会点击平台最终的“发布/发表/群发”按钮。未接入的平台显示“待接入”，没有对应 Content Variant 的平台显示“无内容”。</p>
 </section>
 
 <section class="detail-section">
