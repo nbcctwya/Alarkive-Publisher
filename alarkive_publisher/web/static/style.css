@@ -175,6 +175,8 @@ h4 { margin-bottom: 12px; font-size: 16px; font-weight: 600; }
 .marker-status { color: #15803d; }
 .marker-status.warning, .prompt-status.error { color: var(--danger); }
 .prompt-status { color: #15803d; }
+.title-prompt-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+.title-prompt-row .prompt-status { margin: 0; }
 .prompt-fallback { width: 100%; margin-top: 6px; padding: 8px 9px; resize: vertical; border: 1px solid #cbd5e1; border-radius: 7px; color: var(--ink); background: var(--surface-soft); font: 12px/1.55 Consolas, "Microsoft YaHei", monospace; }
 
 .platform-fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }

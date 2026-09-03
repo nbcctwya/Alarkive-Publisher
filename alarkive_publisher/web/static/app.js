@@ -55,6 +55,28 @@
         markerStatus.className = "marker-status" + (invalid.length || duplicates.length || unused.length ? " warning" : "");
     }
 
+    function buildTitlePrompt() {
+        return [
+            "请根据我们当前对话中已经完成的研究、底稿、配图和最终正文，为以下 4 种内容形态分别生成一个适合发布的标题：", "",
+            "1. 公域长文：用于百家号和今日头条文章。",
+            "2. 微信长文：用于微信公众号长文。",
+            "3. 微信图文 / 小绿书。",
+            "4. 微头条。", "",
+            "要求：", "",
+            "- 根据不同平台的用户阅读习惯、内容形态和推荐机制分别优化，不要简单写成四个相似标题。",
+            "- 标题要准确反映正文内容，可以有吸引力，但不要标题党、夸张或编造。",
+            "- 微信长文可以更有文章感、观点感。",
+            "- 公域长文兼顾信息量、可读性和信息流点击意愿。",
+            "- 微信图文标题简洁直观，适合移动端快速阅读。",
+            "- 微头条标题更直接、更有话题性，适合信息流。",
+            "- 直接按以下格式输出，不要解释：", "",
+            "公域长文：",
+            "微信公众号长文：",
+            "微信图文：",
+            "微头条："
+        ].join("\n");
+    }
+
     function promptWithImages(intro, style, destination, marker) {
         const count = selectedFiles.length || (preserveExistingImages ? existingImageCount : 0);
         const mapping = Array.from({length: count}, (_, index) => "第 " + (index + 1) + " 张图片 → [[image:" + (index + 1) + "]]" ).join("\n");
@@ -213,6 +235,7 @@
     zone.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); input.click(); } });
     if (publicLongBody) { publicLongBody.addEventListener("input", renderMarkerStatus); publicLongBody.addEventListener("change", renderMarkerStatus); }
 
+    bindPrompt("copy-title-prompt", "title-prompt-status", "title-prompt-fallback", buildTitlePrompt, "✓ 标题 Prompt 已复制", false);
     bindPrompt("copy-public-long-prompt", "public-long-prompt-status", "public-long-prompt-fallback", buildPublicLongPrompt, "✓ 公域长文 Prompt 已复制", true);
     bindPrompt("copy-wechat-long-prompt", "wechat-long-prompt-status", "wechat-long-prompt-fallback", buildWechatLongPrompt, "✓ 微信长文 Prompt 已复制", true);
     bindPrompt("copy-wechat-short-prompt", "wechat-short-prompt-status", "wechat-short-prompt-fallback", buildWechatShortPrompt, "✓ 微信图文 Prompt 已复制", false);
