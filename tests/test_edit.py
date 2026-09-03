@@ -165,7 +165,7 @@ class EditPackageTests(unittest.TestCase):
             denied.__cause__ = PermissionError(13, "目录被占用")
 
             with patch.object(storage, "_replace_directory_atomically", side_effect=denied), patch.object(
-                storage.os, "name", "nt"
+                storage, "_is_windows_access_denied", return_value=True
             ):
                 update_post(
                     saved.id,
