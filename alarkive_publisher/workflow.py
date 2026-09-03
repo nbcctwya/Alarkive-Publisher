@@ -16,6 +16,7 @@ from .routing import (
 )
 from .wechat import run_wechat
 from .toutiao_article import run_toutiao_article
+from .toutiao_micro import run_toutiao_micro
 from .workflow_controller import WorkflowController
 from .xiaohongshu import run_xiaohongshu
 
@@ -82,11 +83,16 @@ def run_publisher_workflow(
                 run_baijiahao(page, post, controller)
                 ready_message = "百家号已准备完成"
             elif target == "toutiao_article":
-                run_toutiao_article(page, post, controller)
+                warning = run_toutiao_article(page, post, controller)
                 ready_message = "今日头条文章已准备完成"
+                if warning:
+                    ready_message += f"。{warning}"
             elif target == "wechat_image":
                 page = run_wechat(page, post, controller)
                 ready_message = "微信图文已准备完成"
+            elif target == "toutiao_micro":
+                run_toutiao_micro(page, post, controller)
+                ready_message = "微头条已准备完成"
             else:  # Defensive: registry filtering should make this unreachable.
                 raise ValueError(f"该平台 Publisher 尚未接入：{target}")
             is_last = index == len(active_targets) - 1
@@ -163,8 +169,13 @@ def run_single_platform_workflow(
             run_baijiahao(page, post, controller)
             ready_message = "百家号已准备完成"
         elif target == "toutiao_article":
-            run_toutiao_article(page, post, controller)
+            warning = run_toutiao_article(page, post, controller)
             ready_message = "今日头条文章已准备完成"
+            if warning:
+                ready_message += f"。{warning}"
+        elif target == "toutiao_micro":
+            run_toutiao_micro(page, post, controller)
+            ready_message = "微头条已准备完成"
         else:
             page = run_wechat(page, post, controller)
             ready_message = "微信图文已准备完成"

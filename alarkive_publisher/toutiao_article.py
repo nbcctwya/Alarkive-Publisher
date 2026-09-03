@@ -1609,17 +1609,15 @@ def _fill_body_with_inline_images(
     _assert_inline_content_sequence(body, blocks, tuple(image_signatures))
 
 
-def _wait_for_draft_idle(page: Page, timeout: int = 30_000) -> None:
+def _wait_for_draft_idle(page: Page, timeout: int = 30_000) -> bool:
+    """Observe the saving indicator; an idle UI is not proof of remote saving."""
     deadline = time.monotonic() + timeout / 1_000
     while time.monotonic() < deadline:
         text = _visible_text(page)
         if not re.search(r"草稿保存中|正在保存", text):
-            return
+            return True
         page.wait_for_timeout(500)
-    raise PublisherError(
-        "Checking Toutiao article draft",
-        "Toutiao still reported that the draft was saving after 30 seconds.",
-    )
+    return False
 
 
 def _visible_final_publish_controls(page: Page) -> tuple[str, ...]:
@@ -1642,7 +1640,7 @@ def _verify_ready_state(
     body: Locator,
     blocks: tuple[ContentBlock, ...],
     has_inline_images: bool,
-) -> None:
+) -> str | None:
     page.wait_for_timeout(750)
     title = _title_locator(page)
     if _read_locator_value(title).strip() != content.title:
@@ -1673,30 +1671,39 @@ def _verify_ready_state(
         )
     page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
     page.wait_for_timeout(300)
-    _wait_for_draft_idle(page)
     final_controls = _visible_final_publish_controls(page)
     if not final_controls:
         raise PublisherError(
             "Checking Toutiao article publish area",
             "Could not find the final publish control for manual review.",
         )
+    draft_idle = _wait_for_draft_idle(page)
     LOGGER.info(
         "Toutiao article ready: url=%s logical_images=%d final_controls=%s (not clicked)",
         page.url,
         image_count,
         final_controls,
     )
+    if not draft_idle:
+        warning = (
+            "头条仍显示“草稿保存中”，尚未确认保存成功。"
+            "请在头条页面检查并处理保存状态后，再点击继续；"
+            "离开页面可能丢失未保存内容。"
+        )
+        LOGGER.warning(warning)
+        return warning
+    return None
 
 
 def run_toutiao_article(
     page: Page,
     post: PostContent,
     controller: WorkflowController | None = None,
-) -> None:
+) -> str | None:
     """Prepare ``post.public_long`` in Toutiao's article editor.
 
-    This function intentionally has no code path that locates or clicks a
-    final ``发布``/``发表`` control.
+    Return an optional draft-saving warning for the workflow's manual review
+    pause. This function never clicks a final ``发布``/``发表`` control.
     """
 
     if post.public_long is None:
@@ -1752,7 +1759,7 @@ def run_toutiao_article(
     )
 
     controller.step("toutiao_article", "final_check", "完成最终检查")
-    _run_toutiao_step(
+    return _run_toutiao_step(
         page,
         "Checking Toutiao article before publish",
         lambda: _verify_ready_state(

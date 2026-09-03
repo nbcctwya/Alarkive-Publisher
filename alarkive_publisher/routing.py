@@ -53,7 +53,7 @@ PUBLISHER_REGISTRY = {
         "wechat_image", "wechat_short", "微信图文", True, "wechat_image"
     ),
     "toutiao_micro": PublisherSpec(
-        "toutiao_micro", "toutiao_short", "微头条", False
+        "toutiao_micro", "toutiao_short", "微头条", True, "toutiao_micro"
     ),
 }
 
@@ -61,7 +61,7 @@ PUBLISH_TARGETS = tuple(PUBLISHER_REGISTRY)
 AVAILABLE_PUBLISHERS = frozenset(
     target for target, spec in PUBLISHER_REGISTRY.items() if spec.implemented
 )
-WORKFLOW_TARGETS = ("baijiahao", "toutiao_article", "wechat_image")
+WORKFLOW_TARGETS = ("baijiahao", "toutiao_article", "wechat_image", "toutiao_micro")
 
 # v0.1 callers and sidecars used ``wechat`` for the current WeChat image
 # publisher.  Keep it as an input alias while making the canonical target

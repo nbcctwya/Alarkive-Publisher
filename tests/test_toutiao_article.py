@@ -26,6 +26,7 @@ from alarkive_publisher.toutiao_article import (
     _assert_not_final_publish_control,
     _confirm_inline_upload,
     _wait_for_draft_idle,
+    _verify_ready_state,
     _wait_for_upload_complete,
     _wait_for_upload_started,
     run_toutiao_article,
@@ -109,12 +110,35 @@ class ToutiaoArticleRoutingTests(unittest.TestCase):
         self.assertTrue(marked)
         self.assertEqual([block.index for block in blocks if isinstance(block, ImageBlock)], [2, 1, 3])
 
-    def test_draft_timeout_does_not_report_ready(self) -> None:
+    def test_draft_timeout_reports_busy_without_claiming_save_success(self) -> None:
         with patch("alarkive_publisher.toutiao_article.time.monotonic", side_effect=[0, 0, 31]), patch(
             "alarkive_publisher.toutiao_article._visible_text", return_value="草稿保存中..."
         ):
-            with self.assertRaisesRegex(Exception, "still reported"):
-                _wait_for_draft_idle(Mock())
+            self.assertFalse(_wait_for_draft_idle(Mock()))
+
+    def test_draft_indicator_can_become_idle_within_timeout(self) -> None:
+        with patch("alarkive_publisher.toutiao_article._visible_text", side_effect=["草稿保存中", "存草稿"]):
+            self.assertTrue(_wait_for_draft_idle(Mock()))
+
+    def test_final_check_does_not_soften_content_or_publish_area_failures(self) -> None:
+        for title_value, body_value, count, controls, error in (
+            ("wrong", "body", 1, ("发布",), "title changed"),
+            ("title", "wrong", 1, ("发布",), "text changed"),
+            ("title", "body", 0, ("发布",), "logical images"),
+            ("title", "body", 1, (), "final publish control"),
+        ):
+            with self.subTest(error=error):
+                page, title, body = Mock(), Mock(), Mock()
+                content = ContentVariant("title", "body", (Path("01.png"),))
+                with patch("alarkive_publisher.toutiao_article._title_locator", return_value=title), patch(
+                    "alarkive_publisher.toutiao_article._read_locator_value",
+                    side_effect=lambda locator: title_value if locator is title else body_value,
+                ), patch("alarkive_publisher.toutiao_article._editor_image_count", return_value=count), patch(
+                    "alarkive_publisher.toutiao_article._visible_final_publish_controls", return_value=controls,
+                ), patch("alarkive_publisher.toutiao_article._wait_for_draft_idle", return_value=False) as draft:
+                    with self.assertRaisesRegex(Exception, error):
+                        _verify_ready_state(page, content, body, (), False)
+                draft.assert_not_called()
 
     def test_editor_entrypoint_is_the_current_graphic_publish_page(self) -> None:
         self.assertEqual(EDITOR_URL, "https://mp.toutiao.com/profile_v4/graphic/publish")

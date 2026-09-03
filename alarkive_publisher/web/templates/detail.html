@@ -51,7 +51,7 @@
 
     <div class="workflow-block" aria-live="polite">
         <div class="workflow-heading">
-            <h3>发布准备流程{% if publish_state.workflow.workflow_mode == 'single' %} · 单平台：{{ {'baijiahao': '百家号', 'toutiao_article': '今日头条文章', 'wechat_image': '微信图文'}[publish_state.workflow.target_platform] }}{% endif %}</h3>
+            <h3>发布准备流程{% if publish_state.workflow.workflow_mode == 'single' %} · 单平台：{{ {'baijiahao': '百家号', 'toutiao_article': '今日头条文章', 'wechat_image': '微信图文', 'toutiao_micro': '微头条'}[publish_state.workflow.target_platform] }}{% endif %}</h3>
             <span id="workflow-status">{{ publish_state.workflow.status }}</span>
         </div>
         <div class="workflow-platforms" id="workflow-platforms">
@@ -72,7 +72,7 @@
             {% endif %}
         </div>
     </div>
-    <p class="publisher-note">Alarkive v0.2.1 只准备当前任务中存在且已接入 Publisher 的内容，不会点击平台最终的“发布/发表/群发”按钮。未接入的平台显示“待接入”，没有对应 Content Variant 的平台显示“无内容”。</p>
+    <p class="publisher-note">Alarkive v0.2.2 只准备当前任务中存在且已接入 Publisher 的内容，不会点击平台最终的“发布/发表/群发”按钮。未接入的平台显示“待接入”，没有对应 Content Variant 的平台显示“无内容”。</p>
 </section>
 
 <section class="detail-section">

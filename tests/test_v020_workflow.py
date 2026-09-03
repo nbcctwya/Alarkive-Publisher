@@ -116,7 +116,7 @@ class ContentVariantWorkflowTests(unittest.TestCase):
         with patch("alarkive_publisher.workflow.start_browser") as start_browser:
             with self.assertRaisesRegex(ValueError, "没有已接入的可发布平台"):
                 run_publisher_workflow(
-                    post_with("wechat_long", "toutiao_short"),
+                    post_with("wechat_long"),
                     Path("."),
                     RecordingController(),
                 )
@@ -131,7 +131,7 @@ class ContentVariantWorkflowTests(unittest.TestCase):
             "alarkive_publisher.workflow.run_baijiahao"
         ) as baijiahao, patch("alarkive_publisher.workflow.run_toutiao_article") as toutiao, patch(
             "alarkive_publisher.workflow.run_wechat"
-        ) as wechat:
+        ) as wechat, patch("alarkive_publisher.workflow.run_toutiao_micro") as micro:
             run_publisher_workflow(
                 post_with("public_long", "wechat_long", "toutiao_short"),
                 Path("."),
@@ -140,6 +140,7 @@ class ContentVariantWorkflowTests(unittest.TestCase):
         baijiahao.assert_called_once()
         toutiao.assert_called_once()
         wechat.assert_not_called()
+        micro.assert_called_once()
 
     def test_single_missing_target_fails_before_browser(self) -> None:
         post = post_with("public_long")

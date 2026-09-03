@@ -94,7 +94,7 @@ class PublishUiStateTests(unittest.TestCase):
 
         for label in ("公域长文", "微信长文", "微信图文", "微头条"):
             self.assertIn(label, rendered)
-        for label in ("发布百家号", "发布今日头条文章", "发布微信图文"):
+        for label in ("发布百家号", "发布今日头条文章", "发布微信图文", "发布微头条"):
             self.assertIn(label, rendered)
         self.assertIn("今日头条文章", rendered)
         self.assertIn("微信公众号长文", rendered)
@@ -119,7 +119,7 @@ class PublishUiStateTests(unittest.TestCase):
 
     def test_only_unsupported_variants_disable_full_workflow(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            _, post = self._detail_context(Path(temp), ("wechat_long", "toutiao_short"))
+            _, post = self._detail_context(Path(temp), ("wechat_long",))
             rendered = web_app.templates.get_template("detail.html").render(
                 request=_TemplateRequest(), post=post
             )
@@ -141,6 +141,20 @@ class PublishUiStateTests(unittest.TestCase):
 
         self.assertIn("发布流程进行中", rendered)
         self.assertNotIn('action="/publish_post"', rendered)
+
+    def test_micro_only_has_publish_action_and_single_workflow_label(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            _, post = self._detail_context(Path(temp), ("toutiao_short",))
+            post["publish_state"]["workflow"].update(
+                workflow_mode="single", target_platform="toutiao_micro"
+            )
+            rendered = web_app.templates.get_template("detail.html").render(
+                request=_TemplateRequest(), post=post
+            )
+        self.assertTrue(post["has_available_publisher"])
+        self.assertIn("发布微头条</button>", rendered)
+        self.assertIn("单平台：微头条", rendered)
+        self.assertIn('data-platform-implemented="true"', rendered)
 
     def test_published_detail_keeps_reset_action(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

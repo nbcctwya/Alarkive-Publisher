@@ -25,11 +25,11 @@ class V021RoutingTests(unittest.TestCase):
     def test_available_publishers_and_default_order(self) -> None:
         self.assertEqual(
             AVAILABLE_PUBLISHERS,
-            frozenset({"baijiahao", "toutiao_article", "wechat_image"}),
+            frozenset({"baijiahao", "toutiao_article", "wechat_image", "toutiao_micro"}),
         )
         self.assertEqual(
             WORKFLOW_TARGETS,
-            ("baijiahao", "toutiao_article", "wechat_image"),
+            ("baijiahao", "toutiao_article", "wechat_image", "toutiao_micro"),
         )
 
     def test_publish_state_keeps_canonical_toutiao_slot(self) -> None:
